@@ -1,0 +1,17 @@
+{
+  "queries": [
+    {
+      "label": "irvine-apartments",
+      "params": {
+        "city": "Irvine",
+        "state": "CA",
+        "propertyType": "Apartment"
+      },
+      "fetchedAt": "2026-02-28T07:43:40.917Z",
+      "count": 500,
+      "file": "irvine-apartments.json"
+    }
+  ],
+  "totalApiCalls": 1,
+  "totalListings": 500
+}
