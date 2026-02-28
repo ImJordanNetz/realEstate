@@ -1,3 +1,4 @@
+import { dev } from '$app/environment';
 import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import {
@@ -8,6 +9,28 @@ import {
 	getApartmentPreferenceModel
 } from '$lib/server/apartment-preferences';
 import { z } from 'zod';
+
+function getErrorDetails(err: unknown) {
+	if (err instanceof Error) {
+		return {
+			message: err.message,
+			name: err.name,
+			stack: dev ? err.stack : undefined,
+			cause:
+				err.cause instanceof Error
+					? {
+							message: err.cause.message,
+							name: err.cause.name
+						}
+					: err.cause
+		};
+	}
+
+	return {
+		message: 'Unknown error',
+		value: err
+	};
+}
 
 export const GET: RequestHandler = async () => {
 	return json({
@@ -57,6 +80,12 @@ export const POST: RequestHandler = async ({ request }) => {
 		}
 
 		console.error('Failed to extract apartment preferences.', err);
-		error(500, 'Failed to extract apartment preferences.');
+		return json(
+			{
+				message: 'Failed to extract apartment preferences.',
+				details: dev ? getErrorDetails(err) : undefined
+			},
+			{ status: 500 }
+		);
 	}
 };

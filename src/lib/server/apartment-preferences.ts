@@ -3,7 +3,8 @@ import { env } from '$env/dynamic/private';
 import { generateText, Output } from 'ai';
 import { z } from 'zod';
 
-const DEFAULT_OPENROUTER_MODEL = 'openai/gpt-4o-mini';
+const DEFAULT_OPENROUTER_MODEL = 'openai/gpt-5.2';
+
 
 const travelModeSchema = z.enum(['walk', 'bike', 'drive', 'transit']);
 const searchTypeSchema = z.enum(['category', 'specific']);
@@ -153,10 +154,16 @@ export type ApartmentPreferences = z.infer<typeof apartmentPreferenceSchema>;
 export type ApartmentPreferenceExtraction = z.infer<typeof apartmentPreferenceExtractionSchema>;
 export type ApartmentPreferenceExtractionResponse = {
 	model: string;
+	requested_model: string;
 	preferences: ApartmentPreferenceExtraction;
 	clarification_answers: ApartmentPreferenceInput['clarification_answers'];
 	usage: unknown;
 	openrouter: unknown;
+};
+
+type ResolvedApartmentPreferenceModel = {
+	requestedModel: string;
+	resolvedModel: string;
 };
 
 const APARTMENT_PREFERENCE_SYSTEM_PROMPT = `You extract apartment-ranking preferences from natural language into the LifeMatchProfile schema.
@@ -249,18 +256,30 @@ function getOpenRouterApiKey(): string {
 	return apiKey;
 }
 
-export function getApartmentPreferenceModel(modelOverride?: string): string {
-	return modelOverride?.trim() || env.OPENROUTER_MODEL?.trim() || DEFAULT_OPENROUTER_MODEL;
+function resolveApartmentPreferenceModel(modelOverride?: string): ResolvedApartmentPreferenceModel {
+	const requestedModel =
+		modelOverride?.trim() || env.OPENROUTER_MODEL?.trim() || DEFAULT_OPENROUTER_MODEL;
+
+	return {
+		requestedModel,
+		resolvedModel: requestedModel
+	};
 }
 
-export async function extractApartmentPreferences(input: ApartmentPreferenceInput) {
-	const parsedInput = apartmentPreferenceInputSchema.parse(input);
-	validateClarificationAnswers(parsedInput.clarification_answers);
+function isInvalidOpenRouterModelError(err: unknown): err is Error {
+	return err instanceof Error && /not a valid model ID/i.test(err.message);
+}
 
-	const openrouter = createOpenRouter({ apiKey: getOpenRouterApiKey() });
-	const selectedModel = getApartmentPreferenceModel(parsedInput.model);
+export function getApartmentPreferenceModel(modelOverride?: string): string {
+	return resolveApartmentPreferenceModel(modelOverride).resolvedModel;
+}
 
-	const { output, providerMetadata, usage } = await generateText({
+async function generateApartmentPreferenceExtraction(
+	openrouter: ReturnType<typeof createOpenRouter>,
+	selectedModel: string,
+	parsedInput: ApartmentPreferenceInput
+) {
+	return generateText({
 		model: openrouter(selectedModel),
 		system: APARTMENT_PREFERENCE_SYSTEM_PROMPT,
 		prompt: buildExtractionPrompt(parsedInput),
@@ -270,12 +289,59 @@ export async function extractApartmentPreferences(input: ApartmentPreferenceInpu
 				'LifeMatch extraction result containing a normalized profile and any remaining clarifying questions.'
 		})
 	});
+}
+
+export async function extractApartmentPreferences(input: ApartmentPreferenceInput) {
+	const parsedInput = apartmentPreferenceInputSchema.parse(input);
+	validateClarificationAnswers(parsedInput.clarification_answers);
+
+	const openrouter = createOpenRouter({ apiKey: getOpenRouterApiKey() });
+	const { requestedModel, resolvedModel } = resolveApartmentPreferenceModel(parsedInput.model);
+
+	let selectedModel = resolvedModel;
+	let generationResult;
+
+	try {
+		generationResult = await generateApartmentPreferenceExtraction(
+			openrouter,
+			selectedModel,
+			parsedInput
+		);
+	} catch (err) {
+		if (!isInvalidOpenRouterModelError(err)) {
+			throw err;
+		}
+
+		if (selectedModel === DEFAULT_OPENROUTER_MODEL) {
+			throw new Error(
+				`Configured OpenRouter model "${requestedModel}" is invalid. Use a supported provider/model ID such as "${DEFAULT_OPENROUTER_MODEL}" or "openai/gpt-5-mini".`
+			);
+		}
+
+		selectedModel = DEFAULT_OPENROUTER_MODEL;
+		generationResult = await generateApartmentPreferenceExtraction(
+			openrouter,
+			selectedModel,
+			parsedInput
+		);
+	}
+
+	const { output, providerMetadata, usage } = generationResult;
 
 	return {
 		model: selectedModel,
+		requested_model: requestedModel,
 		preferences: output,
 		clarification_answers: parsedInput.clarification_answers,
 		usage,
-		openrouter: providerMetadata?.openrouter ?? null
+		openrouter: {
+			...(providerMetadata?.openrouter && typeof providerMetadata.openrouter === 'object'
+				? providerMetadata.openrouter
+				: {}),
+			requested_model: requestedModel,
+			resolved_model: selectedModel,
+			model_was_normalized: requestedModel !== resolvedModel,
+			fell_back_to_default: selectedModel !== resolvedModel
+		}
 	};
 }
