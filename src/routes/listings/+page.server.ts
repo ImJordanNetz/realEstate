@@ -6,6 +6,7 @@ export type MapListing = {
 	address: string;
 	lat: number;
 	lng: number;
+	placeId: string | null;
 	bedrooms: number | null;
 	bathrooms: number | null;
 	sqft: number | null;
@@ -19,6 +20,7 @@ function loadListings(): MapListing[] {
 			address: listing.address,
 			lat: listing.location.lat,
 			lng: listing.location.lng,
+			placeId: listing.place_id,
 			bedrooms: listing.bedrooms,
 			bathrooms: listing.bathrooms,
 			sqft: listing.sqft,

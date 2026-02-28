@@ -29,6 +29,16 @@ npm run dev
 npm run dev -- --open
 ```
 
+## Enriching Google Place IDs
+
+To attach Google `placeId`s to the saved RentCast listings, set `GOOGLE_API_KEY` in `.env` and run:
+
+```sh
+npm run places:enrich
+```
+
+The script reads [`src/lib/server/data/rentcast-raw/irvine-apartments.json`](/Users/jordannetz/Desktop/hackathons/irvine2026/realEstate/src/lib/server/data/rentcast-raw/irvine-apartments.json) and writes matches to [`src/lib/server/data/google-place-ids.json`](/Users/jordannetz/Desktop/hackathons/irvine2026/realEstate/src/lib/server/data/google-place-ids.json). The normalized inventory loader then exposes each match as `place_id` on the listing objects.
+
 ## Building
 
 To create a production version of your app:

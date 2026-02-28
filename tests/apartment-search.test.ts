@@ -27,6 +27,12 @@ class StubPlacesProvider implements PlaceSearchProvider {
 }
 
 class StubRoutesProvider implements RouteMatrixProvider {
+	public readonly calls: Array<{
+		originIds: string[];
+		destinationIds: string[];
+		travelMode: string;
+	}> = [];
+
 	constructor(
 		private readonly matrix: Record<string, Record<string, Record<string, number | null>>>
 	) {}
@@ -36,6 +42,12 @@ class StubRoutesProvider implements RouteMatrixProvider {
 		destinations: Array<{ id: string }>;
 		travelMode: string;
 	}) {
+		this.calls.push({
+			originIds: input.origins.map((origin) => origin.id),
+			destinationIds: input.destinations.map((destination) => destination.id),
+			travelMode: input.travelMode
+		});
+
 		return input.origins.flatMap((origin) =>
 			input.destinations.map((destination) => ({
 				origin_id: origin.id,
@@ -112,6 +124,7 @@ function createListing(
 			lat: 33.68,
 			lng: -117.82
 		},
+		place_id: null,
 		source: 'rentcast',
 		property_type: 'Apartment',
 		status: 'Active',
@@ -274,4 +287,75 @@ test('searchApartments falls back to best near-miss when no apartment satisfies 
 	assert.equal(result.ranked[0]?.required_pass_count, 2);
 	assert.equal(result.ranked[1]?.listing.id, 'beta');
 	assert.ok(result.ranked[0]!.required_score > result.ranked[1]!.required_score);
+});
+
+test('searchApartments only routes a shortlist of top candidates', async () => {
+	const preferences = createPreferenceProfile();
+	const listings = [
+		createListing('alpha', { location: { lat: 33.6407, lng: -117.8444 } }),
+		createListing('beta', { location: { lat: 33.642, lng: -117.843 } }),
+		createListing('gamma', { location: { lat: 33.67, lng: -117.82 } }),
+		createListing('delta', { location: { lat: 33.71, lng: -117.79 } }),
+		createListing('epsilon', { location: { lat: 33.73, lng: -117.78 } }),
+		createListing('zeta', { location: { lat: 33.75, lng: -117.76 } })
+	];
+	const places = new StubPlacesProvider({
+		'specific:university of california, irvine': [
+			{
+				id: 'uci',
+				name: 'University of California, Irvine',
+				location: { lat: 33.6405, lng: -117.8443 },
+				address: 'Irvine, CA',
+				types: ['university']
+			}
+		],
+		'category:park': [
+			{
+				id: 'park-1',
+				name: 'Park One',
+				location: { lat: 33.6412, lng: -117.8438 },
+				address: 'Irvine, CA',
+				types: ['park']
+			}
+		],
+		'category:rock climbing gym': [
+			{
+				id: 'climb-1',
+				name: 'Climb One',
+				location: { lat: 33.652, lng: -117.85 },
+				address: 'Irvine, CA',
+				types: ['gym']
+			}
+		]
+	});
+	const routes = new StubRoutesProvider({
+		bike: {
+			alpha: { uci: 6 },
+			beta: { uci: 7 }
+		},
+		walk: {
+			alpha: { 'park-1': 3 },
+			beta: { 'park-1': 4 }
+		},
+		drive: {
+			alpha: { 'climb-1': 8 },
+			beta: { 'climb-1': 10 }
+		}
+	});
+
+	const result = await searchApartments({
+		preferences,
+		listings,
+		providers: { places, routes },
+		options: {
+			shortlistCount: 2
+		}
+	});
+
+	assert.equal(result.ranked.length, 2);
+	assert.deepEqual(
+		new Set(routes.calls.flatMap((call) => call.originIds)),
+		new Set(['alpha', 'beta'])
+	);
+	assert.ok(routes.calls.every((call) => call.originIds.length <= 2));
 });

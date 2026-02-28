@@ -22,6 +22,7 @@ export const apartmentInventoryListingSchema = z.object({
 	title: z.string(),
 	address: z.string(),
 	location: apartmentLocationSchema,
+	place_id: z.string().nullable(),
 	source: z.literal('rentcast'),
 	property_type: z.string().nullable(),
 	status: z.string(),
@@ -39,6 +40,24 @@ export const apartmentInventoryListingSchema = z.object({
 });
 
 export const apartmentInventoryCollectionSchema = z.array(apartmentInventoryListingSchema);
+
+export const googlePlaceMatchSchema = z.object({
+	placeId: z.string().nullable(),
+	propertyKey: z.string(),
+	matchedName: z.string().nullable(),
+	matchedAddress: z.string().nullable(),
+	primaryType: z.string().nullable(),
+	googleMapsUri: z.string().nullable(),
+	matchMethod: z.enum(['nearby', 'text', 'unmatched']),
+	confidence: z.number().min(0).max(1).nullable(),
+	updatedAt: z.string()
+});
+
+export const googlePlaceIdStoreSchema = z.object({
+	version: z.literal(1),
+	updatedAt: z.string(),
+	matches: z.record(z.string(), googlePlaceMatchSchema)
+});
 
 export const rentcastListingSchema = z.object({
 	id: z.string(),
@@ -70,8 +89,13 @@ export const rentcastListingCollectionSchema = z.array(rentcastListingSchema);
 
 export type ApartmentInventoryListing = z.infer<typeof apartmentInventoryListingSchema>;
 export type RentcastListing = z.infer<typeof rentcastListingSchema>;
+export type GooglePlaceMatch = z.infer<typeof googlePlaceMatchSchema>;
+export type GooglePlaceIdStore = z.infer<typeof googlePlaceIdStoreSchema>;
 
-export function normalizeRentcastListing(listing: RentcastListing): ApartmentInventoryListing {
+export function normalizeRentcastListing(
+	listing: RentcastListing,
+	placeMatch?: GooglePlaceMatch
+): ApartmentInventoryListing {
 	return apartmentInventoryListingSchema.parse({
 		id: listing.id,
 		title: listing.addressLine1?.trim() || listing.formattedAddress,
@@ -80,6 +104,7 @@ export function normalizeRentcastListing(listing: RentcastListing): ApartmentInv
 			lat: listing.latitude,
 			lng: listing.longitude
 		},
+		place_id: placeMatch?.placeId ?? null,
 		source: 'rentcast',
 		property_type: listing.propertyType ?? null,
 		status: listing.status,
@@ -97,17 +122,42 @@ export function normalizeRentcastListing(listing: RentcastListing): ApartmentInv
 	});
 }
 
-export function loadRentcastListingsFromFile(filePath: string) {
+export function createEmptyGooglePlaceIdStore(): GooglePlaceIdStore {
+	return {
+		version: 1,
+		updatedAt: new Date(0).toISOString(),
+		matches: {}
+	};
+}
+
+export function loadGooglePlaceIdStore(filePath: string): GooglePlaceIdStore {
+	try {
+		const raw = readFileSync(filePath, 'utf-8');
+		return googlePlaceIdStoreSchema.parse(JSON.parse(raw));
+	} catch {
+		return createEmptyGooglePlaceIdStore();
+	}
+}
+
+export function loadRentcastListingsFromFile(
+	filePath: string,
+	googlePlaceIdsPath = getDefaultGooglePlaceIdsPath()
+) {
 	const raw = readFileSync(filePath, 'utf-8');
 	const parsed = rentcastListingCollectionSchema.parse(JSON.parse(raw));
+	const googlePlaces = loadGooglePlaceIdStore(googlePlaceIdsPath);
 
 	return parsed
 		.filter((listing) => listing.status === 'Active' && !!listing.latitude && !!listing.longitude)
-		.map(normalizeRentcastListing);
+		.map((listing) => normalizeRentcastListing(listing, googlePlaces.matches[listing.id]));
 }
 
 export function getDefaultIrvineRentcastPath() {
 	return join(process.cwd(), 'src/lib/server/data/rentcast-raw/irvine-apartments.json');
+}
+
+export function getDefaultGooglePlaceIdsPath() {
+	return join(process.cwd(), 'src/lib/server/data/google-place-ids.json');
 }
 
 export function loadIrvineRentcastListings() {

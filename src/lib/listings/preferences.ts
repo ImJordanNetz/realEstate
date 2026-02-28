@@ -14,6 +14,7 @@ export type ClarificationQuestion =
 	ApartmentPreferenceExtractionResponse['preferences']['clarification_questions'][number];
 export type ClarificationAnswer =
 	ApartmentPreferenceExtractionResponse['clarification_answers'][number];
+type MutablePathContainer = Record<string | number, unknown>;
 
 type ExtractionRequest = {
 	prompt: string;
@@ -89,25 +90,53 @@ export function toClarificationAnswers(
 }
 
 function setValueAtPath(target: Record<string, unknown>, path: string, value: ClarificationAnswerValue) {
-	const segments = path.split('.').filter(Boolean);
+	const segments = path
+		.replace(/\[(\d+)\]/g, '.$1')
+		.split('.')
+		.filter(Boolean);
 
 	if (!segments.length) {
 		return;
 	}
 
-	let current: Record<string, unknown> = target;
+	let current: unknown = target;
 
-	for (const segment of segments.slice(0, -1)) {
-		const nextValue = current[segment];
+	for (const [index, segment] of segments.slice(0, -1).entries()) {
+		const nextSegment = segments[index + 1];
+		const currentIsArray = Array.isArray(current);
+		const segmentKey = currentIsArray ? Number.parseInt(segment, 10) : segment;
 
-		if (!nextValue || typeof nextValue !== 'object' || Array.isArray(nextValue)) {
-			current[segment] = {};
+		if (
+			current == null ||
+			(typeof current !== 'object' && !Array.isArray(current)) ||
+			(currentIsArray && Number.isNaN(segmentKey))
+		) {
+			return;
 		}
 
-		current = current[segment] as Record<string, unknown>;
+		const container = current as MutablePathContainer;
+		const nextValue = container[segmentKey];
+		const shouldCreateArray = /^\d+$/.test(nextSegment ?? '');
+
+		if (!nextValue || typeof nextValue !== 'object') {
+			container[segmentKey] = shouldCreateArray ? [] : {};
+		}
+
+		current = container[segmentKey];
 	}
 
-	current[segments[segments.length - 1]] = value;
+	if (current == null || (typeof current !== 'object' && !Array.isArray(current))) {
+		return;
+	}
+
+	const finalSegment = segments[segments.length - 1];
+	const finalKey = Array.isArray(current) ? Number.parseInt(finalSegment, 10) : finalSegment;
+
+	if (Array.isArray(current) && Number.isNaN(finalKey)) {
+		return;
+	}
+
+	(current as MutablePathContainer)[finalKey] = value;
 }
 
 export function applyClarificationAnswersToProfile(

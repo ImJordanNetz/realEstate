@@ -7,16 +7,144 @@
 		type ClarificationAnswerMap,
 		type ExtractionError,
 	} from "$lib/listings/preferences";
+	import {
+		getApartmentSearchErrorMessage,
+		requestApartmentSearch,
+		type ApartmentSearchError,
+		type ApartmentSearchResponse,
+	} from "$lib/listings/search";
 	import Map from "$lib/components/ui/map/Map.svelte";
 	import MapClusterLayer from "$lib/components/ui/map/MapClusterLayer.svelte";
-	import ListingCard from "$lib/components/ListingCard.svelte";
+	import ListingCard, {
+		type ListingCardListing,
+	} from "$lib/components/ListingCard.svelte";
 	import ClarifyingQuestions from "$lib/components/ClarifyingQuestions.svelte";
 	import GridSpinner from "$lib/components/ui/GridSpinner.svelte";
 	import type { PageData } from "./$types";
 
 	let { data }: { data: PageData } = $props();
 
-	let listings = $derived(data.listings);
+	let baseListings = $derived(data.listings);
+	let prompt = $derived(data.prompt);
+	let query = $state("");
+	let result = $state<ApartmentPreferenceExtractionResponse | null>(null);
+	let apiError = $state<ExtractionError | null>(null);
+	let isLoading = $state(false);
+	let activePrompt = $state("");
+	let questionsSubmitted = $state(false);
+	let searchResult = $state<ApartmentSearchResponse | null>(null);
+	let searchError = $state<ApartmentSearchError | null>(null);
+	let isSearchingMatches = $state(false);
+	let lastSearchFingerprint = "";
+	let apartmentSearchRequestCount = 0;
+
+	function uiLog(step: string, details?: Record<string, unknown>) {
+		console.info(`[listings-ui] ${step}`, details ?? {});
+	}
+
+	function formatNumber(value: number | null | undefined) {
+		if (value == null) return "—";
+		return Math.round(value).toString();
+	}
+
+	function formatCriteriaHighlight(
+		criterion: ApartmentSearchResponse["ranked"][number]["criteria"][number],
+	) {
+		if (typeof criterion.actual !== "number") {
+			return null;
+		}
+
+		if (criterion.target.includes("min")) {
+			return `${criterion.label}: ${formatNumber(criterion.actual)} min`;
+		}
+
+		if (criterion.target.includes("usd")) {
+			return `${criterion.label}: $${formatNumber(criterion.actual)}`;
+		}
+
+		return `${criterion.label}: ${formatNumber(criterion.actual)}`;
+	}
+
+	let listingCards = $derived.by((): ListingCardListing[] => {
+		if (!searchResult) {
+			return baseListings.slice(0, 10).map((listing) => ({
+				id: listing.id,
+				address: listing.address,
+				placeId: listing.placeId,
+				lat: listing.lat,
+				lng: listing.lng,
+				bedrooms: listing.bedrooms,
+				bathrooms: listing.bathrooms,
+				sqft: listing.sqft,
+				price: listing.price,
+			}));
+		}
+
+		return searchResult.ranked.map((hit) => {
+			const highlights = hit.criteria
+				.map(formatCriteriaHighlight)
+				.filter((value): value is string => !!value)
+				.filter((value) => !value.startsWith("Rent cap"))
+				.slice(0, 3);
+
+			return {
+				id: hit.listing.id,
+				address: hit.listing.address,
+				placeId: hit.listing.place_id,
+				lat: hit.listing.location.lat,
+				lng: hit.listing.location.lng,
+				bedrooms: hit.listing.bedrooms,
+				bathrooms: hit.listing.bathrooms,
+				sqft: hit.listing.sqft,
+				price: hit.listing.rent,
+				matchScore: hit.total_score,
+				requiredSummary: hit.passes_required
+					? "Meets all required filters"
+					: `${hit.required_pass_count}/${hit.required_total} required checks satisfied`,
+				highlights,
+			};
+		});
+	});
+
+	let listings = $derived.by(() => {
+		if (!searchResult) {
+			return baseListings;
+		}
+
+		return searchResult.ranked.map((hit) => ({
+			id: hit.listing.id,
+			address: hit.listing.address,
+			lat: hit.listing.location.lat,
+			lng: hit.listing.location.lng,
+			bedrooms: hit.listing.bedrooms,
+			bathrooms: hit.listing.bathrooms,
+			sqft: hit.listing.sqft,
+			price: hit.listing.rent,
+		}));
+	});
+
+	let completedProfile = $derived.by(() => {
+		if (!result) return null;
+		if (result.preferences.clarification_questions.length > 0) return null;
+		return result.preferences.profile;
+	});
+
+	let usesWalkingOrBiking = $derived.by(() => {
+		if (!completedProfile) return false;
+		const constraints = Array.isArray(completedProfile.constraints)
+			? completedProfile.constraints
+			: [];
+
+		return (
+			completedProfile.commute?.travel_mode === "bike" ||
+			completedProfile.commute?.travel_mode === "walk" ||
+			constraints.some(
+				(constraint) =>
+					constraint.travel_mode === "bike" ||
+					constraint.travel_mode === "walk",
+			)
+		);
+	});
 
 	// Compute bounding box for all listings
 	let listingBounds = $derived.by(() => {
@@ -61,26 +189,6 @@
 			})),
 		}),
 	);
-
-	function formatPrice(price: number | null) {
-		if (price == null) return "—";
-		return `$${price.toLocaleString()}`;
-	}
-
-	function formatBedBath(bed: number | null, bath: number | null) {
-		const parts: string[] = [];
-		if (bed != null) parts.push(bed === 0 ? "Studio" : `${bed}bd`);
-		if (bath != null) parts.push(`${bath}ba`);
-		return parts.join(" / ") || "—";
-	}
-
-	let prompt = $derived(data.prompt);
-	let query = $state("");
-	let result = $state<ApartmentPreferenceExtractionResponse | null>(null);
-	let apiError = $state<ExtractionError | null>(null);
-	let isLoading = $state(false);
-	let activePrompt = $state("");
-	let questionsSubmitted = $state(false);
 
 	// When the left panel is showing (questionsSubmitted), add extra left padding
 	// so the map centers in the visible 2/3 of the screen.
@@ -163,6 +271,11 @@
 			return;
 		}
 
+		uiLog("clarifications_submitted", {
+			answerIds: Object.keys(answers),
+			answerCount: Object.keys(answers).length,
+		});
+
 		const updatedResult = finalizeExtractionWithClarifications(
 			result,
 			answers,
@@ -170,6 +283,8 @@
 
 		activePrompt = prompt;
 		apiError = null;
+		searchError = null;
+		searchResult = null;
 		questionsSubmitted = true;
 		result = updatedResult;
 	}
@@ -183,6 +298,10 @@
 			apiError = null;
 			isLoading = false;
 			questionsSubmitted = false;
+			searchResult = null;
+			searchError = null;
+			isSearchingMatches = false;
+			lastSearchFingerprint = "";
 			return;
 		}
 
@@ -191,9 +310,16 @@
 		result = null;
 		apiError = null;
 		questionsSubmitted = false;
+		searchResult = null;
+		searchError = null;
+		isSearchingMatches = false;
+		lastSearchFingerprint = "";
 
 		void (async () => {
 			try {
+				uiLog("preference_extraction_start", {
+					promptLength: prompt.length,
+				});
 				const { response, payload } =
 					await requestListingPreferenceExtraction({
 						prompt,
@@ -205,6 +331,10 @@
 				}
 
 				if (!response.ok) {
+					uiLog("preference_extraction_response_error", {
+						status: response.status,
+						message: getExtractionErrorMessage(payload),
+					});
 					apiError = {
 						message: getExtractionErrorMessage(payload),
 						status: response.status,
@@ -212,12 +342,26 @@
 					return;
 				}
 
-				result = payload as ApartmentPreferenceExtractionResponse;
+				const extractionResult =
+					payload as ApartmentPreferenceExtractionResponse;
+				uiLog("preference_extraction_complete", {
+					status: extractionResult.preferences.status,
+					clarificationQuestions:
+						extractionResult.preferences.clarification_questions
+							.length,
+				});
+				result = extractionResult;
 			} catch (error) {
 				if (controller.signal.aborted) {
 					return;
 				}
 
+				uiLog("preference_extraction_failed", {
+					message:
+						error instanceof Error
+							? error.message
+							: "Failed to extract listing preferences.",
+				});
 				apiError = {
 					message:
 						error instanceof Error
@@ -234,6 +378,131 @@
 
 		return () => controller.abort();
 	});
+
+	$effect(() => {
+		const profile = completedProfile;
+
+		if (!profile) {
+			isSearchingMatches = false;
+			searchResult = null;
+			searchError = null;
+			lastSearchFingerprint = "";
+			return;
+		}
+
+		const fingerprint = JSON.stringify(profile);
+
+		if (fingerprint === lastSearchFingerprint) {
+			uiLog("apartment_search_skipped_duplicate_profile", {
+				fingerprintLength: fingerprint.length,
+			});
+			return;
+		}
+
+		lastSearchFingerprint = fingerprint;
+		const controller = new AbortController();
+		const requestId = ++apartmentSearchRequestCount;
+		const startedAt = Date.now();
+		isSearchingMatches = true;
+		searchResult = null;
+		searchError = null;
+
+		void (async () => {
+			try {
+				const constraints = Array.isArray(profile.constraints)
+					? profile.constraints
+					: [];
+				uiLog("apartment_search_start", {
+					requestId,
+					hasCommute: !!profile.commute,
+					constraints: constraints.length,
+					fingerprintLength: fingerprint.length,
+				});
+				const { response, payload } = await requestApartmentSearch({
+					preferences: profile,
+					signal: controller.signal,
+				});
+
+				if (controller.signal.aborted) {
+					uiLog("apartment_search_ignored_after_abort", {
+						requestId,
+						durationMs: Date.now() - startedAt,
+					});
+					return;
+				}
+
+				if (!response.ok) {
+					uiLog("apartment_search_response_error", {
+						requestId,
+						status: response.status,
+						message: getApartmentSearchErrorMessage(payload),
+						durationMs: Date.now() - startedAt,
+					});
+					searchError = {
+						message: getApartmentSearchErrorMessage(payload),
+						status: response.status,
+					};
+					return;
+				}
+
+				const rankingResult = payload as ApartmentSearchResponse;
+				uiLog("apartment_search_complete", {
+					requestId,
+					mode: rankingResult.mode,
+					results: rankingResult.ranked.length,
+					topListingIds: rankingResult.ranked
+						.slice(0, 5)
+						.map((hit) => hit.listing.id),
+					durationMs: Date.now() - startedAt,
+				});
+				searchResult = rankingResult;
+			} catch (error) {
+				if (controller.signal.aborted) {
+					uiLog("apartment_search_aborted", {
+						requestId,
+						durationMs: Date.now() - startedAt,
+					});
+					return;
+				}
+
+				uiLog("apartment_search_failed", {
+					requestId,
+					message:
+						error instanceof Error
+							? error.message
+							: "Failed to rank apartments.",
+					durationMs: Date.now() - startedAt,
+				});
+				searchError = {
+					message:
+						error instanceof Error
+							? error.message
+							: "Failed to rank apartments.",
+					status: 500,
+				};
+			} finally {
+				if (!controller.signal.aborted) {
+					isSearchingMatches = false;
+					uiLog("apartment_search_finish", {
+						requestId,
+						durationMs: Date.now() - startedAt,
+					});
+				}
+			}
+		})();
+
+		return () => {
+			if (!controller.signal.aborted) {
+				uiLog("apartment_search_cleanup_abort", {
+					requestId,
+					durationMs: Date.now() - startedAt,
+				});
+				controller.abort();
+			}
+		};
+	});
+
+	let leftPanelRightPadding = $derived(questionsSubmitted ? "pr-1" : "");
 </script>
 
 <svelte:window bind:innerWidth />
@@ -261,7 +530,7 @@
 				clusterMaxZoom={16}
 				clusterThresholds={[10, 50]}
 				clusterColors={["#6d28d9", "#7c3aed", "#8b5cf6"]}
-				pointColor={"#6d28d9"}
+				pointColor="#6d28d9"
 			/>
 		</Map>
 	</div>
@@ -274,7 +543,7 @@
 			: 'flex-start'}; transition: align-items 0s;"
 	>
 		<div
-			class="pointer-events-auto flex flex-col gap-6 overflow-hidden rounded-[2rem] border border-white/60 bg-white/80 p-5 shadow-2xl shadow-black/15 backdrop-blur-xl"
+			class="pointer-events-auto flex flex-col gap-6 overflow-hidden rounded-[2rem] border border-white/60 bg-white/80 p-5 {leftPanelRightPadding} shadow-2xl shadow-black/15 backdrop-blur-xl"
 			style="
 				width: {questionsSubmitted ? '33.333%' : '80%'};
 				max-width: {questionsSubmitted ? 'none' : '64rem'};
@@ -447,17 +716,72 @@
 							<h2
 								class="font-serif text-xl tracking-tight text-gray-900"
 							>
-								Top matches
+								{searchResult?.mode === "fallback"
+									? "Closest matches"
+									: "Top matches"}
 							</h2>
-							<p class="mt-1 text-xs text-gray-400">
-								{Math.min(10, listings.length)} of {listings.length}
-								listings
-							</p>
+							{#if isSearchingMatches}
+								<p class="mt-1 text-xs text-gray-400">
+									Ranking apartments with live Google Places
+									and route data...
+								</p>
+							{:else if searchResult}
+								<p class="mt-1 text-xs text-gray-400">
+									{searchResult.ranked.length} ranked listings
+									{searchResult.mode === "fallback"
+										? " · no listing satisfied every hard requirement"
+										: " · ranked after filtering required needs"}
+								</p>
+							{:else}
+								<p class="mt-1 text-xs text-gray-400">
+									{Math.min(10, listings.length)} of {listings.length}
+									listings
+								</p>
+							{/if}
 						</div>
+						{#if searchResult?.mode === "fallback"}
+							<p
+								class="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-relaxed text-amber-800"
+							>
+								No apartment passed every required rule with the
+								current data, so these are the closest available
+								matches.
+							</p>
+						{/if}
+						{#if usesWalkingOrBiking && searchResult}
+							<p
+								class="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-xs leading-relaxed text-sky-800"
+							>
+								Google notes that walking and bicycling routes
+								may sometimes be missing sidewalks, paths, or
+								local details.
+							</p>
+						{/if}
+						{#if searchError}
+							<p
+								class="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-relaxed text-red-700"
+							>
+								{searchError.message} Showing raw listings instead.
+							</p>
+						{/if}
 						<div
 							class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1"
 						>
-							{#each listings.slice(0, 10) as listing (listing.id)}
+							{#if isSearchingMatches && !searchResult}
+								<div
+									class="flex items-center gap-3 rounded-2xl border border-gray-200 bg-gray-50 px-4 py-4 text-sm text-gray-600"
+								>
+									<GridSpinner
+										size="18px"
+										class="text-primary"
+									/>
+									<span
+										>Scoring listings and checking travel
+										times...</span
+									>
+								</div>
+							{/if}
+							{#each listingCards as listing (listing.id)}
 								<ListingCard {listing} />
 							{/each}
 						</div>
