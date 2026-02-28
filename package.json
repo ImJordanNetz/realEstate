@@ -10,6 +10,7 @@
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"homes:fetch": "node --import tsx scripts/fetch-for-sale.ts",
 		"places:enrich": "node --import tsx scripts/enrich-google-place-ids.ts",
 		"nightlife:grid": "node --import tsx scripts/generate-nightlife-grid.ts",
 		"test": "node --import tsx --test tests/*.test.ts"

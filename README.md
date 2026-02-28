@@ -49,6 +49,27 @@ npm run nightlife:grid
 
 The script reads the active Irvine listing region and writes the generated grid to [`src/lib/server/data/irvine-nightlife-grid-500m.json`](/Users/jordannetz/Desktop/hackathons/irvine2026/realEstate/src/lib/server/data/irvine-nightlife-grid-500m.json). Runtime search loads this file directly instead of querying Google Places on each request.
 
+## Crawling Orange County homes for sale
+
+Before using RapidAPI from this repo, rotate any key that was pasted into chat or another shared surface, then update `.env` with `RAPIDAPI_KEY` and `RAPIDAPI_HOST`.
+
+To crawl seeded Orange County cities, cache the raw responses, and build the deduped local inventory artifact, run:
+
+```sh
+npm run homes:fetch
+```
+
+Useful overrides:
+
+```sh
+npm run homes:fetch -- --cities=Irvine,Tustin --pages=5 --limit=200
+npm run homes:fetch -- --force
+```
+
+The crawler writes raw responses to `src/lib/server/data/rapidapi-for-sale-raw/*.json`, crawl metadata to `src/lib/server/data/rapidapi-for-sale-meta.json`, and the normalized deduped artifact to `src/lib/server/data/orange-county-homes.json`.
+
+Normalization lives in `src/lib/server/home-inventory.ts`. It defensively parses SearchHomeResult-style rows, deduplicates by `property_id`, preserves richer duplicates, and exposes `loadOrangeCountyHomes()` for the future buyer search path.
+
 ## Building
 
 To create a production version of your app:
