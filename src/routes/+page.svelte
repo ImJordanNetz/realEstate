@@ -1,6 +1,5 @@
 <script lang="ts">
 	import ArrowRight from "@lucide/svelte/icons/arrow-right";
-	import Search from "@lucide/svelte/icons/search";
 
 	let query = $state("");
 </script>
@@ -32,21 +31,27 @@
 		No more filters. No more guessing. Just tell us how you live, and we'll find the apartment that fits.
 	</p>
 
-	<!-- Pill-shaped input -->
-	<div class="relative mt-10 flex w-full max-w-lg items-center">
-		<div class="relative flex w-full items-center rounded-full border border-primary/20 bg-background/50 shadow-lg shadow-primary/10 backdrop-blur-sm transition-all focus-within:border-primary/50 focus-within:shadow-primary/20">
-			<Search class="ml-5 size-5 shrink-0 text-muted-foreground" />
-			<input
-				type="text"
+	<!-- ChatGPT-style composer input -->
+	<div class="relative mt-10 w-full max-w-lg">
+		<div class="relative rounded-[28px] border border-primary/20 bg-background/80 shadow-lg shadow-primary/10 backdrop-blur-sm transition-all focus-within:border-primary/50 focus-within:shadow-primary/20">
+			<textarea
 				bind:value={query}
 				placeholder="I bike everywhere, love climbing, and need to be near UCI..."
-				class="h-14 w-full bg-transparent px-4 text-base text-foreground placeholder:text-muted-foreground focus:outline-none"
-			/>
-			<button
-				class="mr-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md transition-all hover:scale-105 hover:bg-primary/90 hover:shadow-primary/40"
-			>
-				<ArrowRight class="size-4" />
-			</button>
+				rows="1"
+				class="block w-full resize-none bg-transparent px-5 pt-4 pb-14 text-base text-foreground placeholder:text-muted-foreground focus:outline-none"
+				oninput={(e) => {
+					const target = e.currentTarget;
+					target.style.height = 'auto';
+					target.style.height = target.scrollHeight + 'px';
+				}}
+			></textarea>
+			<div class="absolute bottom-3 right-3">
+				<button
+					class="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md transition-all hover:scale-105 hover:bg-primary/90 hover:shadow-primary/40"
+				>
+					<ArrowRight class="size-4" />
+				</button>
+			</div>
 		</div>
 	</div>
 </section>
