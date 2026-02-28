@@ -22,6 +22,7 @@
 	} from "$lib/components/ListingCard.svelte";
 	import ClarifyingQuestions from "$lib/components/ClarifyingQuestions.svelte";
 	import GridSpinner from "$lib/components/ui/GridSpinner.svelte";
+	import { Skeleton } from "$lib/components/ui/skeleton";
 	import type { PageData } from "./$types";
 
 	let { data }: { data: PageData } = $props();
@@ -820,18 +821,23 @@
 							class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1"
 						>
 							{#if isSearchingMatches && !searchResult}
-								<div
-									class="flex items-center gap-3 rounded-2xl border border-gray-200 bg-gray-50 px-4 py-4 text-sm text-gray-600"
-								>
-									<GridSpinner
-										size="18px"
-										class="text-primary"
-									/>
-									<span
-										>Scoring listings and checking travel
-										times...</span
-									>
-								</div>
+								{#each { length: 5 } as _, i (i)}
+									<div class="flex shrink-0 flex-row rounded-2xl border border-gray-100 bg-white shadow-sm overflow-hidden mr-4">
+										<Skeleton class="w-28 shrink-0 self-stretch rounded-none" />
+										<div class="flex min-w-0 flex-1 flex-col gap-2.5 p-4">
+											<div class="flex items-baseline justify-between">
+												<Skeleton class="h-5 w-20" />
+												<Skeleton class="h-4 w-16 rounded-full" />
+											</div>
+											<Skeleton class="h-3.5 w-28" />
+											<Skeleton class="h-3 w-40" />
+											<div class="flex gap-1.5 pt-0.5">
+												<Skeleton class="h-4 w-20 rounded-md" />
+												<Skeleton class="h-4 w-24 rounded-md" />
+											</div>
+										</div>
+									</div>
+								{/each}
 							{/if}
 							{#each listingCards as listing (listing.id)}
 								<div id="listing-{listing.id}">
