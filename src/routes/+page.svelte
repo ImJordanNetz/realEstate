@@ -20,6 +20,8 @@
         }
         query += text.toLowerCase();
     }
+
+    const canSubmit = $derived(query.trim().length > 0);
 </script>
 
 <section
@@ -64,12 +66,13 @@
     </p>
 
     <!-- ChatGPT-style composer input -->
-    <div class="relative mt-10 w-full max-w-lg">
+    <form class="relative mt-10 w-full max-w-lg" action="/listings" method="GET">
         <div
             class="relative rounded-[28px] border border-primary/20 bg-background/80 shadow-lg shadow-primary/10 backdrop-blur-sm transition-all focus-within:border-primary/50 focus-within:shadow-primary/20"
         >
             <textarea
                 bind:value={query}
+                name="prompt"
                 placeholder="I bike everywhere, love climbing, and need to be near UCI..."
                 rows="1"
                 class="block w-full resize-none bg-transparent px-5 pt-4 pb-14 text-base text-foreground placeholder:text-muted-foreground/40 focus:outline-none"
@@ -81,13 +84,16 @@
             ></textarea>
             <div class="absolute bottom-3 right-3">
                 <button
-                    class="flex h-9 w-9 cursor-grab items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md transition-all hover:scale-105 hover:bg-primary/90 hover:shadow-primary/40"
+                    type="submit"
+                    disabled={!canSubmit}
+                    class="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md transition-all hover:scale-105 hover:bg-primary/90 hover:shadow-primary/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100"
+                    aria-label="Find listings"
                 >
                     <ArrowRight class="size-4" />
                 </button>
             </div>
         </div>
-    </div>
+    </form>
 
     <!-- Suggestion pills -->
     <div class="relative mt-5 flex max-w-lg flex-col items-center gap-3">
@@ -95,7 +101,7 @@
             Try a few — or just say it in your own words
         </p>
         <div class="flex flex-wrap justify-center gap-2">
-            {#each suggestions as suggestion}
+            {#each suggestions as suggestion (suggestion)}
                 <button
                     onclick={() => addSuggestion(suggestion)}
                     class="cursor-grab rounded-full border border-border/60 bg-background/60 px-3.5 py-1.5 text-sm text-muted-foreground backdrop-blur-sm transition-all hover:border-primary/40 hover:bg-primary/5 hover:text-foreground"
