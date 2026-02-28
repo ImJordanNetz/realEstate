@@ -191,7 +191,7 @@ test('loadIrvineRentcastListings normalizes the RentCast feed', () => {
 	assert.ok(region.bounds.west <= region.bounds.east);
 });
 
-test('searchApartments returns strict matches ordered by weighted soft preferences', async () => {
+test('searchApartments returns strict matches first and appends near misses when exact matches are sparse', async () => {
 	const preferences = createPreferenceProfile();
 	const listings = [
 		createListing('alpha', { rent: 3350 }),
@@ -261,9 +261,91 @@ test('searchApartments returns strict matches ordered by weighted soft preferenc
 	assert.equal(result.mode, 'strict');
 	assert.equal(result.ranked[0]?.listing.id, 'alpha');
 	assert.equal(result.ranked[0]?.passes_required, true);
+	assert.equal(result.ranked[1]?.listing.id, 'beta');
+	assert.equal(result.ranked[1]?.passes_required, true);
+	assert.equal(result.ranked[2]?.listing.id, 'gamma');
+	assert.equal(result.ranked[2]?.passes_required, false);
 	assert.equal(result.ranked[0]?.derived_metrics.commute_minutes, 8);
 	assert.equal(result.ranked[0]?.derived_metrics.proximity_minutes[parkKey], 4);
-	assert.equal(result.ranked.some((hit) => hit.listing.id === 'gamma'), false);
+	assert.equal(result.ranked.length, 3);
+});
+
+test('searchApartments keeps results strict-only once it has at least three exact matches', async () => {
+	const preferences = createPreferenceProfile();
+	const listings = [
+		createListing('alpha', { rent: 3350 }),
+		createListing('beta', { rent: 3500 }),
+		createListing('delta', { rent: 3450 }),
+		createListing('gamma', {
+			rent: 3200,
+			parking: {
+				available: false,
+				type: 'none'
+			}
+		})
+	];
+	const places = new StubPlacesProvider({
+		'specific:university of california, irvine': [
+			{
+				id: 'uci',
+				name: 'University of California, Irvine',
+				location: { lat: 33.6405, lng: -117.8443 },
+				address: 'Irvine, CA',
+				types: ['university']
+			}
+		],
+		'category:park': [
+			{
+				id: 'park-1',
+				name: 'Park One',
+				location: { lat: 33.681, lng: -117.82 },
+				address: 'Irvine, CA',
+				types: ['park']
+			}
+		],
+		'category:rock climbing gym': [
+			{
+				id: 'climb-1',
+				name: 'Climb One',
+				location: { lat: 33.69, lng: -117.84 },
+				address: 'Irvine, CA',
+				types: ['gym']
+			}
+		]
+	});
+	const routes = new StubRoutesProvider({
+		bike: {
+			alpha: { uci: 8 },
+			beta: { uci: 9 },
+			delta: { uci: 10 },
+			gamma: { uci: 7 }
+		},
+		walk: {
+			alpha: { 'park-1': 4 },
+			beta: { 'park-1': 7 },
+			delta: { 'park-1': 5 },
+			gamma: { 'park-1': 2 }
+		},
+		drive: {
+			alpha: { 'climb-1': 10 },
+			beta: { 'climb-1': 18 },
+			delta: { 'climb-1': 11 },
+			gamma: { 'climb-1': 9 }
+		}
+	});
+
+	const result = await searchApartments({
+		preferences,
+		listings,
+		providers: { places, routes }
+	});
+
+	assert.equal(result.mode, 'strict');
+	assert.deepEqual(
+		result.ranked.map((hit) => hit.listing.id),
+		['alpha', 'delta', 'beta']
+	);
+	assert.ok(result.ranked.every((hit) => hit.passes_required));
 });
 
 test('searchApartments falls back to best near-miss when no apartment satisfies all required criteria', async () => {

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 
@@ -71,9 +71,9 @@ export const rentcastListingSchema = z.object({
 	latitude: z.number(),
 	longitude: z.number(),
 	propertyType: z.string().nullable().optional(),
-	bedrooms: z.number().nonnegative().nullable(),
-	bathrooms: z.number().nonnegative().nullable(),
-	squareFootage: z.number().nonnegative().nullable(),
+	bedrooms: z.number().nonnegative().nullable().optional(),
+	bathrooms: z.number().nonnegative().nullable().optional(),
+	squareFootage: z.number().nonnegative().nullable().optional(),
 	status: z.string(),
 	price: z.number().nonnegative().nullable(),
 	listingType: z.string().nullable().optional(),
@@ -108,10 +108,10 @@ export function normalizeRentcastListing(
 		source: 'rentcast',
 		property_type: listing.propertyType ?? null,
 		status: listing.status,
-		rent: listing.price,
-		bedrooms: listing.bedrooms,
-		bathrooms: listing.bathrooms,
-		sqft: listing.squareFootage,
+		rent: listing.price ?? null,
+		bedrooms: listing.bedrooms ?? null,
+		bathrooms: listing.bathrooms ?? null,
+		sqft: listing.squareFootage ?? null,
 		listed_date: listing.listedDate ?? null,
 		furnished: null,
 		parking: null,
@@ -162,4 +162,19 @@ export function getDefaultGooglePlaceIdsPath() {
 
 export function loadIrvineRentcastListings() {
 	return loadRentcastListingsFromFile(getDefaultIrvineRentcastPath());
+}
+
+export function getRentcastRawDir() {
+	return join(process.cwd(), 'src/lib/server/data/rentcast-raw');
+}
+
+export function loadAllRentcastListings(): ApartmentInventoryListing[] {
+	const dir = getRentcastRawDir();
+	const files = readdirSync(dir).filter((f) => f.endsWith('.json'));
+	const all: ApartmentInventoryListing[] = [];
+	for (const file of files) {
+		const listings = loadRentcastListingsFromFile(join(dir, file));
+		all.push(...listings);
+	}
+	return all;
 }

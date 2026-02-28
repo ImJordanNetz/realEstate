@@ -10,8 +10,41 @@
       "fetchedAt": "2026-02-28T07:43:40.917Z",
       "count": 500,
       "file": "irvine-apartments.json"
+    },
+    {
+      "label": "anaheim-apartments",
+      "params": {
+        "city": "Anaheim",
+        "state": "CA",
+        "propertyType": "Apartment"
+      },
+      "fetchedAt": "2026-02-28T20:22:47.040Z",
+      "count": 335,
+      "file": "anaheim-apartments.json"
+    },
+    {
+      "label": "santa-ana-apartments",
+      "params": {
+        "city": "Santa Ana",
+        "state": "CA",
+        "propertyType": "Apartment"
+      },
+      "fetchedAt": "2026-02-28T20:22:47.294Z",
+      "count": 180,
+      "file": "santa-ana-apartments.json"
+    },
+    {
+      "label": "costa-mesa-apartments",
+      "params": {
+        "city": "Costa Mesa",
+        "state": "CA",
+        "propertyType": "Apartment"
+      },
+      "fetchedAt": "2026-02-28T20:22:47.494Z",
+      "count": 140,
+      "file": "costa-mesa-apartments.json"
     }
   ],
-  "totalApiCalls": 1,
-  "totalListings": 500
+  "totalApiCalls": 4,
+  "totalListings": 1155
 }

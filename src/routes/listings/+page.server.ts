@@ -1,5 +1,5 @@
 import type { PageServerLoad } from './$types';
-import { loadIrvineRentcastListings } from '$lib/server/apartment-inventory';
+import { loadAllRentcastListings } from '$lib/server/apartment-inventory';
 import { loadDefaultNightlifeGrid } from '$lib/server/nightlife-grid';
 
 export type MapListing = {
@@ -16,7 +16,7 @@ export type MapListing = {
 
 function loadListings(): MapListing[] {
 	try {
-		return loadIrvineRentcastListings().map((listing) => ({
+		return loadAllRentcastListings().map((listing) => ({
 			id: listing.id,
 			address: listing.address,
 			lat: listing.location.lat,

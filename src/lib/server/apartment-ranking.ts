@@ -65,6 +65,7 @@ export type ApartmentRankingOptions = {
 	maxResults?: number;
 	budgetCapIsRequired?: boolean;
 	unknownScore?: number;
+	minStrictResults?: number;
 	defaultTravelTargets?: Partial<Record<'walk' | 'bike' | 'drive' | 'transit', number>>;
 };
 
@@ -78,6 +79,13 @@ type CriterionDefinition = {
 
 const DEFAULT_UNKNOWN_SCORE = 0.35;
 const DEFAULT_MAX_RESULTS = 20;
+const DEFAULT_MIN_STRICT_RESULTS = 3;
+
+// Core criteria get a weight multiplier so they naturally outweigh lifestyle criteria.
+// A criterion's effective weight = user-specified importance × tier multiplier.
+const TIER_CORE = 2.0; // budget, commute, bedrooms, bathrooms, sqft
+const TIER_STANDARD = 1.0; // lease length, furnished, parking, laundry, pets, proximity constraints
+const TIER_LIFESTYLE = 0.5; // nightlife, amenities
 const DEFAULT_TRAVEL_TARGETS: Record<'walk' | 'bike' | 'drive' | 'transit', number> = {
 	walk: 10,
 	bike: 15,
@@ -362,7 +370,7 @@ function buildParkingCriterion(
 	}
 
 	const required = preferences.required || preferences.is_dealbreaker;
-	const weight = preferences.importance;
+	const weight = preferences.importance * TIER_STANDARD;
 	const targetType = preferences.type_preference;
 
 	return {
@@ -419,7 +427,7 @@ function buildLaundryCriterion(
 	}
 
 	const required = preferences.is_dealbreaker;
-	const weight = preferences.importance;
+	const weight = preferences.importance * TIER_STANDARD;
 
 	return {
 		key: 'laundry',
@@ -479,7 +487,7 @@ function buildPetsCriterion(
 	}
 
 	const required = preferences.is_dealbreaker;
-	const weight = preferences.importance;
+	const weight = preferences.importance * TIER_STANDARD;
 	const wantedTypes = new Set((preferences.pet_types ?? []).map(normalizeText));
 
 	return {
@@ -575,17 +583,18 @@ function compileCriteria(
 
 	if (preferences.budget.max_rent != null) {
 		const required = options.budgetCapIsRequired ?? true;
+		const weight = 1 * TIER_CORE;
 		criteria.push({
 			key: 'budget:max-rent',
 			label: 'Rent cap',
 			required,
-			weight: 1,
+			weight,
 			evaluate: (listing) =>
 				evaluateMaxTarget(
 					'budget:max-rent',
 					'Rent cap',
 					required,
-					1,
+					weight,
 					listing.rent,
 					preferences.budget.max_rent!,
 					unknownScore,
@@ -596,17 +605,18 @@ function compileCriteria(
 	}
 
 	if (preferences.budget.ideal_rent != null) {
+		const weight = 0.55 * TIER_CORE;
 		criteria.push({
 			key: 'budget:ideal-rent',
 			label: 'Ideal rent',
 			required: false,
-			weight: 0.55,
+			weight,
 			evaluate: (listing) =>
 				evaluateMaxTarget(
 					'budget:ideal-rent',
 					'Ideal rent',
 					false,
-					0.55,
+					weight,
 					listing.rent,
 					preferences.budget.ideal_rent!,
 					unknownScore,
@@ -620,18 +630,19 @@ function compileCriteria(
 		const commute = preferences.commute;
 		const targetMinutes = commute.max_minutes ?? travelTargets[commute.travel_mode];
 		const required = commute.is_dealbreaker;
+		const weight = commute.importance * TIER_CORE;
 
 		criteria.push({
 			key: 'commute',
 			label: `Commute to ${commute.search_query}`,
 			required,
-			weight: commute.importance,
+			weight,
 			evaluate: (listing) =>
 				evaluateTravelPreference(
 					'commute',
 					`Commute to ${commute.search_query}`,
 					required,
-					commute.importance,
+					weight,
 					listing.commute_minutes,
 					targetMinutes,
 					unknownScore
@@ -641,16 +652,17 @@ function compileCriteria(
 
 	if (preferences.nightlife) {
 		const nightlife = preferences.nightlife;
+		const weight = nightlife.importance * TIER_LIFESTYLE;
 		criteria.push({
 			key: 'nightlife',
 			label: 'Nightlife intensity',
 			required: nightlife.is_dealbreaker,
-			weight: nightlife.importance,
+			weight,
 			evaluate: (listing) =>
 				evaluateNightlifePreference({
 					preference: nightlife.preference,
 					required: nightlife.is_dealbreaker,
-					weight: nightlife.importance,
+					weight,
 					actual: listing.nightlife_intensity,
 					unknownScore
 				})
@@ -661,12 +673,13 @@ function compileCriteria(
 		const key = buildConstraintKey(constraint);
 		const targetMinutes = constraint.max_minutes ?? travelTargets[constraint.travel_mode];
 		const required = constraint.is_dealbreaker;
+		const weight = constraint.importance * TIER_STANDARD;
 
 		criteria.push({
 			key,
 			label: constraint.label,
 			required,
-			weight: constraint.importance,
+			weight,
 			evaluate: (listing) => {
 				const minutes = listing.proximity_minutes[key] ?? null;
 
@@ -675,7 +688,7 @@ function compileCriteria(
 						key,
 						constraint.label,
 						required,
-						constraint.importance,
+						weight,
 						minutes,
 						targetMinutes,
 						unknownScore
@@ -688,7 +701,7 @@ function compileCriteria(
 					key,
 					label: constraint.label,
 					required,
-					weight: constraint.importance,
+					weight,
 					score,
 					status: minutes == null ? 'unknown' : score >= 0.7 ? 'pass' : 'fail',
 					reason:
@@ -710,17 +723,18 @@ function compileCriteria(
 
 	if (unitRequirements.bedrooms) {
 		const { min, max, is_dealbreaker, importance } = unitRequirements.bedrooms;
+		const weight = importance * TIER_CORE;
 		criteria.push({
 			key: 'bedrooms',
 			label: 'Bedrooms',
 			required: is_dealbreaker,
-			weight: importance,
+			weight,
 			evaluate: (listing) =>
 				evaluateRangeTarget(
 					'bedrooms',
 					'Bedrooms',
 					is_dealbreaker,
-					importance,
+					weight,
 					listing.bedrooms,
 					min,
 					max,
@@ -733,17 +747,18 @@ function compileCriteria(
 
 	if (unitRequirements.bathrooms) {
 		const { min, is_dealbreaker, importance } = unitRequirements.bathrooms;
+		const weight = importance * TIER_CORE;
 		criteria.push({
 			key: 'bathrooms',
 			label: 'Bathrooms',
 			required: is_dealbreaker,
-			weight: importance,
+			weight,
 			evaluate: (listing) =>
 				evaluateRangeTarget(
 					'bathrooms',
 					'Bathrooms',
 					is_dealbreaker,
-					importance,
+					weight,
 					listing.bathrooms,
 					min,
 					null,
@@ -756,17 +771,18 @@ function compileCriteria(
 
 	if (unitRequirements.sqft) {
 		const { min, max, is_dealbreaker, importance } = unitRequirements.sqft;
+		const weight = importance * TIER_CORE;
 		criteria.push({
 			key: 'sqft',
 			label: 'Square footage',
 			required: is_dealbreaker,
-			weight: importance,
+			weight,
 			evaluate: (listing) =>
 				evaluateRangeTarget(
 					'sqft',
 					'Square footage',
 					is_dealbreaker,
-					importance,
+					weight,
 					listing.sqft,
 					min,
 					max,
@@ -779,17 +795,18 @@ function compileCriteria(
 
 	if (unitRequirements.lease_length_months) {
 		const { min, max, is_dealbreaker, importance } = unitRequirements.lease_length_months;
+		const weight = importance * TIER_STANDARD;
 		criteria.push({
 			key: 'lease-length',
 			label: 'Lease length',
 			required: is_dealbreaker,
-			weight: importance,
+			weight,
 			evaluate: (listing) =>
 				evaluateRangeTarget(
 					'lease-length',
 					'Lease length',
 					is_dealbreaker,
-					importance,
+					weight,
 					listing.lease_length_months,
 					min,
 					max,
@@ -801,17 +818,18 @@ function compileCriteria(
 	}
 
 	if (unitRequirements.furnished) {
+		const weight = unitRequirements.furnished.importance * TIER_STANDARD;
 		criteria.push({
 			key: 'furnished',
 			label: 'Furnished',
 			required: unitRequirements.furnished.is_dealbreaker,
-			weight: unitRequirements.furnished.importance,
+			weight,
 			evaluate: (listing) =>
 				evaluateBooleanTarget(
 					'furnished',
 					'Furnished',
 					unitRequirements.furnished!.is_dealbreaker,
-					unitRequirements.furnished!.importance,
+					weight,
 					listing.furnished,
 					unitRequirements.furnished!.preferred,
 					unknownScore
@@ -835,7 +853,7 @@ function compileCriteria(
 	}
 
 	for (const amenity of unitRequirements.amenities ?? []) {
-		criteria.push(buildAmenityCriterion(amenity.name, amenity.is_dealbreaker, amenity.importance));
+		criteria.push(buildAmenityCriterion(amenity.name, amenity.is_dealbreaker, amenity.importance * TIER_LIFESTYLE));
 	}
 
 	return criteria;
@@ -929,9 +947,18 @@ export function rankApartments(
 	ranked.sort(compareRankedApartments);
 
 	const strictMatches = ranked.filter((listing) => listing.passes_required);
+	const nearMisses = ranked.filter((listing) => !listing.passes_required);
 	const maxResults = options.maxResults ?? DEFAULT_MAX_RESULTS;
+	const minStrictResults = options.minStrictResults ?? DEFAULT_MIN_STRICT_RESULTS;
 
 	if (strictMatches.length > 0) {
+		if (strictMatches.length < minStrictResults) {
+			return {
+				mode: 'strict',
+				ranked: [...strictMatches, ...nearMisses].slice(0, maxResults)
+			};
+		}
+
 		return {
 			mode: 'strict',
 			ranked: strictMatches.slice(0, maxResults)

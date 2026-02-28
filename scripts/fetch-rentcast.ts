@@ -78,6 +78,30 @@ const queries: QueryConfig[] = [
 			state: 'CA',
 			propertyType: 'Apartment'
 		}
+	},
+	{
+		label: 'anaheim-apartments',
+		params: {
+			city: 'Anaheim',
+			state: 'CA',
+			propertyType: 'Apartment'
+		}
+	},
+	{
+		label: 'santa-ana-apartments',
+		params: {
+			city: 'Santa Ana',
+			state: 'CA',
+			propertyType: 'Apartment'
+		}
+	},
+	{
+		label: 'costa-mesa-apartments',
+		params: {
+			city: 'Costa Mesa',
+			state: 'CA',
+			propertyType: 'Apartment'
+		}
 	}
 ];
 

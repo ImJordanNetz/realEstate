@@ -18,6 +18,7 @@
 	import MapHeatmapLayer from "$lib/components/ui/map/MapHeatmapLayer.svelte";
 	import ListingCard, {
 		type ListingCardListing,
+		type ListingHighlight,
 	} from "$lib/components/ListingCard.svelte";
 	import ClarifyingQuestions from "$lib/components/ClarifyingQuestions.svelte";
 	import GridSpinner from "$lib/components/ui/GridSpinner.svelte";
@@ -81,20 +82,21 @@
 
 	function formatCriteriaHighlight(
 		criterion: ApartmentSearchResponse["ranked"][number]["criteria"][number],
-	) {
+	): ListingHighlight | null {
 		if (typeof criterion.actual !== "number") {
 			return null;
 		}
 
+		let text: string;
 		if (criterion.target.includes("min")) {
-			return `${criterion.label}: ${formatNumber(criterion.actual)} min`;
+			text = `${criterion.label}: ${formatNumber(criterion.actual)} min`;
+		} else if (criterion.target.includes("usd")) {
+			text = `${criterion.label}: $${formatNumber(criterion.actual)}`;
+		} else {
+			text = `${criterion.label}: ${formatNumber(criterion.actual)}`;
 		}
 
-		if (criterion.target.includes("usd")) {
-			return `${criterion.label}: $${formatNumber(criterion.actual)}`;
-		}
-
-		return `${criterion.label}: ${formatNumber(criterion.actual)}`;
+		return { text, status: criterion.status };
 	}
 
 	let listingCards = $derived.by((): ListingCardListing[] => {
@@ -116,9 +118,9 @@
 		const mapped = searchResult.ranked.map((hit) => {
 			const highlights = hit.criteria
 				.map(formatCriteriaHighlight)
-				.filter((value): value is string => !!value)
-				.filter((value) => !value.startsWith("Rent cap"))
-				.slice(0, 3);
+				.filter((value): value is ListingHighlight => !!value)
+				.filter((value) => !value.text.startsWith("Rent cap"))
+				.slice(0, 5);
 
 			return {
 				id: hit.listing.id,

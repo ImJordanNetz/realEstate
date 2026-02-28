@@ -2,7 +2,7 @@ import { json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
 import { apartmentPreferenceSchema } from '$lib/server/apartment-preferences';
-import { loadIrvineRentcastListings } from '$lib/server/apartment-inventory';
+import { loadAllRentcastListings } from '$lib/server/apartment-inventory';
 import { searchApartments } from '$lib/server/apartment-search';
 import { createGoogleMapsProviders } from '$lib/server/google-maps';
 
@@ -45,7 +45,7 @@ export const POST: RequestHandler = async ({ request }) => {
 	}
 
 	try {
-		const listings = loadIrvineRentcastListings();
+		const listings = loadAllRentcastListings();
 		log('api', 'request_received', {
 			listings: listings.length,
 			hasCommute: !!parsed.data.preferences.commute,

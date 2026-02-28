@@ -6,7 +6,7 @@ import {
 	type PlaceSearchProvider,
 	type PlaceSearchRequest
 } from '../src/lib/server/apartment-search';
-import { loadIrvineRentcastListings } from '../src/lib/server/apartment-inventory';
+import { loadAllRentcastListings } from '../src/lib/server/apartment-inventory';
 import {
 	buildNightlifeGrid,
 	createNightlifeGridArtifact,
@@ -145,7 +145,7 @@ function createScriptPlacesProvider(): PlaceSearchProvider {
 }
 
 async function main() {
-	const listings = loadIrvineRentcastListings();
+	const listings = loadAllRentcastListings();
 	const region = buildSearchRegion(listings, REGION_PADDING_METERS);
 	const grid = await buildNightlifeGrid({
 		region,

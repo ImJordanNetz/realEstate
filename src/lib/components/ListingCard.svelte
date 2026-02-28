@@ -1,6 +1,11 @@
 <script lang="ts">
 	import { browser } from "$app/environment";
 
+	export type ListingHighlight = {
+		text: string;
+		status: 'pass' | 'fail' | 'unknown';
+	};
+
 	export type ListingCardListing = {
 		id: string;
 		address: string;
@@ -13,7 +18,7 @@
 		price: number | null;
 		matchScore?: number;
 		requiredSummary?: string | null;
-		highlights?: string[];
+		highlights?: ListingHighlight[];
 	};
 
 	interface Props {
@@ -199,10 +204,16 @@
 
 		{#if listing.highlights?.length}
 			<div class="flex flex-wrap gap-1.5 pt-0.5">
-				{#each listing.highlights as highlight (highlight)}
-					<span class="inline-flex items-center rounded-md border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] font-medium text-gray-500">
-						{highlight}
-					</span>
+				{#each listing.highlights as highlight (highlight.text)}
+					{#if highlight.status === 'fail'}
+						<span class="inline-flex items-center rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-medium text-rose-400">
+							{highlight.text}
+						</span>
+					{:else}
+						<span class="inline-flex items-center rounded-md border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] font-medium text-gray-500">
+							{highlight.text}
+						</span>
+					{/if}
 				{/each}
 			</div>
 		{/if}
