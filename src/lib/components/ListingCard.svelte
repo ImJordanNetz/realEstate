@@ -23,6 +23,8 @@
 
 	interface Props {
 		listing: ListingCardListing;
+		selected?: boolean;
+		onclick?: () => void;
 	}
 
 	type ListingPhoto = {
@@ -32,7 +34,7 @@
 		googleMapsUri: string | null;
 	};
 
-	let { listing }: Props = $props();
+	let { listing, selected = false, onclick }: Props = $props();
 	let photo = $state<ListingPhoto | null>(null);
 	let isPhotoLoading = $state(false);
 	let photoLoadFailed = $state(false);
@@ -108,8 +110,11 @@
 	});
 </script>
 
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <article
-	class="group flex shrink-0 flex-row rounded-2xl border border-gray-100 bg-white shadow-sm transition hover:shadow-md overflow-hidden mr-4"
+	class="group flex shrink-0 flex-row rounded-2xl border bg-white shadow-sm transition hover:shadow-md overflow-hidden mr-4 {selected ? 'border-primary ring-2 ring-primary/20' : 'border-gray-100'} {onclick ? 'cursor-pointer' : ''}"
+	onclick={onclick}
 >
 	<div
 		class="relative w-28 shrink-0 self-stretch bg-gradient-to-br from-gray-100 to-gray-200"

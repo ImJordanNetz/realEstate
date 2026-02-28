@@ -543,6 +543,40 @@
 	});
 
 	let leftPanelRightPadding = $derived(questionsSubmitted ? "pr-1" : "");
+
+	// Map interaction: clicking a listing focuses the map on it
+	let mapInstance: import("maplibre-gl").Map | null = $state(null);
+	let selectedListingId = $state<string | null>(null);
+
+	function handleListingClick(listing: ListingCardListing) {
+		selectedListingId = listing.id;
+		if (!mapInstance) return;
+
+		// The left panel covers 1/3 of the viewport, so we need to offset the
+		// center so the listing point lands in the middle of the visible 2/3.
+		// We fly to the raw coordinates first, then use the pixel projection to
+		// shift the center leftward by half the panel width.
+		const panelPixels = questionsSubmitted ? Math.round(innerWidth / 3) : 0;
+		mapInstance.flyTo({
+			center: [listing.lng, listing.lat],
+			zoom: 15,
+			duration: 800,
+			padding: { top: 0, bottom: 0, left: panelPixels, right: 0 },
+		});
+	}
+
+	function handleMapPointClick(
+		feature: GeoJSON.Feature<GeoJSON.Point>,
+		_coordinates: [number, number],
+	) {
+		const id = feature.properties?.id as string | undefined;
+		if (!id) return;
+		selectedListingId = id;
+
+		// Scroll the listing card into view
+		const el = document.getElementById(`listing-${id}`);
+		el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+	}
 </script>
 
 <svelte:window bind:innerWidth />
@@ -563,6 +597,7 @@
 				light: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
 				dark: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
 			}}
+			onmapcreated={(m) => (mapInstance = m)}
 		>
 			<!-- <MapHeatmapLayer
 				data={nightlifeGeoJSON}
@@ -578,6 +613,7 @@
 				clusterThresholds={[10, 50]}
 				clusterColors={["#6d28d9", "#7c3aed", "#8b5cf6"]}
 				pointColor="#6d28d9"
+				onpointclick={handleMapPointClick}
 			/>
 		</Map>
 	</div>
@@ -798,7 +834,13 @@
 								</div>
 							{/if}
 							{#each listingCards as listing (listing.id)}
-								<ListingCard {listing} />
+								<div id="listing-{listing.id}">
+									<ListingCard
+										{listing}
+										selected={selectedListingId === listing.id}
+										onclick={() => handleListingClick(listing)}
+									/>
+								</div>
 							{/each}
 						</div>
 					</div>

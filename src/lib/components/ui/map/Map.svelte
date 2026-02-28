@@ -65,6 +65,8 @@
 		 * to enable controlled mode where the map viewport is driven by your state.
 		 */
 		onviewportchange?: (viewport: MapViewport) => void;
+		/** Callback that receives the MapLibre map instance once loaded */
+		onmapcreated?: (map: MapLibreGL.Map) => void;
 	}
 
 	const defaultStyles = {
@@ -84,6 +86,7 @@
 		boundsPadding = 60,
 		viewport,
 		onviewportchange,
+		onmapcreated,
 	}: Props = $props();
 
 	let mapContainer: HTMLDivElement;
@@ -234,6 +237,7 @@
 		mapInstance.on("pitchend", () => (isInteracting = false));
 
 		map = mapInstance;
+		onmapcreated?.(mapInstance);
 	});
 
 	// Sync controlled viewport to map
