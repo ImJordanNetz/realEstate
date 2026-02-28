@@ -15,6 +15,7 @@
 	} from "$lib/listings/search";
 	import Map from "$lib/components/ui/map/Map.svelte";
 	import MapClusterLayer from "$lib/components/ui/map/MapClusterLayer.svelte";
+	import MapHeatmapLayer from "$lib/components/ui/map/MapHeatmapLayer.svelte";
 	import ListingCard, {
 		type ListingCardListing,
 	} from "$lib/components/ListingCard.svelte";
@@ -25,6 +26,23 @@
 	let { data }: { data: PageData } = $props();
 
 	let baseListings = $derived(data.listings);
+	let nightlifeCells = $derived(data.nightlifeCells);
+
+	let nightlifeGeoJSON = $derived.by(
+		(): GeoJSON.FeatureCollection<GeoJSON.Point> => ({
+			type: "FeatureCollection",
+			features: nightlifeCells.map((cell) => ({
+				type: "Feature" as const,
+				geometry: {
+					type: "Point" as const,
+					coordinates: [cell.lng, cell.lat],
+				},
+				properties: {
+					intensity: cell.intensity,
+				},
+			})),
+		}),
+	);
 	let prompt = $derived(data.prompt);
 	let query = $state("");
 	let result = $state<ApartmentPreferenceExtractionResponse | null>(null);
@@ -544,6 +562,13 @@
 				dark: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
 			}}
 		>
+			<!-- <MapHeatmapLayer
+				data={nightlifeGeoJSON}
+				intensityProperty="intensity"
+				maxIntensity={93}
+				radius={30}
+				opacity={0.6}
+			/> -->
 			<MapClusterLayer
 				data={listingsGeoJSON}
 				clusterRadius={40}

@@ -1,5 +1,6 @@
 import type { PageServerLoad } from './$types';
 import { loadIrvineRentcastListings } from '$lib/server/apartment-inventory';
+import { loadDefaultNightlifeGrid } from '$lib/server/nightlife-grid';
 
 export type MapListing = {
 	id: string;
@@ -33,11 +34,29 @@ function loadListings(): MapListing[] {
 
 const listings = loadListings();
 
+function loadNightlifeCells(): { lat: number; lng: number; intensity: number }[] {
+	try {
+		const grid = loadDefaultNightlifeGrid();
+		return grid.cells
+			.filter((cell) => cell.intensity > 0)
+			.map((cell) => ({
+				lat: cell.center.lat,
+				lng: cell.center.lng,
+				intensity: cell.intensity
+			}));
+	} catch {
+		return [];
+	}
+}
+
+const nightlifeCells = loadNightlifeCells();
+
 export const load: PageServerLoad = async ({ url }) => {
 	const prompt = url.searchParams.get('prompt')?.trim() ?? '';
 
 	return {
 		prompt,
-		listings
+		listings,
+		nightlifeCells
 	};
 };
