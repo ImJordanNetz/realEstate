@@ -10,6 +10,7 @@ const travelModeSchema = z.enum(['walk', 'bike', 'drive', 'transit']);
 const searchTypeSchema = z.enum(['category', 'specific']);
 const importanceSchema = z.number().min(0).max(1);
 const clarificationResponseTypeSchema = z.enum(['boolean', 'number', 'single_select']);
+const nightlifePreferenceSchema = z.enum(['quiet', 'lively']);
 
 const proximityConstraintSchema = z.object({
 	label: z.string(),
@@ -70,6 +71,13 @@ export const apartmentPreferenceSchema = z.object({
 		max_rent: z.number().positive().nullable(),
 		ideal_rent: z.number().positive().nullable()
 	}),
+	nightlife: z
+		.object({
+			preference: nightlifePreferenceSchema,
+			is_dealbreaker: z.boolean(),
+			importance: importanceSchema
+		})
+		.nullable(),
 	commute: z
 		.object({
 			search_query: z.string(),
@@ -180,11 +188,15 @@ Rules:
 - When status is "needs_clarification", clarification_questions must contain 1 to 3 concrete questions.
 - Preserve the user's original prompt in raw_input.
 - Budget, commute, and unit requirements should only include values the user actually stated or strongly implied.
+- Use nightlife when the user expresses a desire for quiet nights or lively nightlife near home.
 - Never invent numeric values for rent, travel time, square footage, lease length, bathroom count, or bedroom count.
 - If a numeric field was not stated, use null.
+- If nightlife was not mentioned, set nightlife to null.
 - If no commute was mentioned, set commute to null.
 - If no unit requirements were mentioned, set unit_requirements to null.
 - constraints should contain lifestyle and proximity preferences beyond budget and the primary commute.
+- Use nightlife.preference = "quiet" for phrases like "quiet at night", "not noisy", or "good for studying".
+- Use nightlife.preference = "lively" for phrases like "good nightlife", "walk to bars", or "energetic neighborhood".
 - Use search_type = "category" for place types like park, grocery store, or rock climbing gym.
 - Use search_type = "specific" for named destinations or venues.
 - search_query must be suitable for Google Places lookups.
@@ -200,7 +212,7 @@ Rules:
 - For response_type = "boolean", options must be null.
 - For response_type = "number", options must be null and unit should usually be "usd", "minutes", "bedrooms", "bathrooms", or "months" when relevant.
 - For response_type = "single_select", options must contain 2 to 6 choices with short labels and values.
-- field_path should identify the field to be updated, such as "budget.max_rent", "commute.max_minutes", or "unit_requirements.pets.allowed".`;
+- field_path should identify the field to be updated, such as "budget.max_rent", "nightlife.preference", "commute.max_minutes", or "unit_requirements.pets.allowed".`;
 
 function formatClarificationAnswers(clarificationAnswers: ApartmentPreferenceInput['clarification_answers']) {
 	if (!clarificationAnswers.length) {

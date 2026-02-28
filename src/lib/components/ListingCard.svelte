@@ -145,17 +145,17 @@
 		{/if}
 	</div>
 
-	<div class="flex min-w-0 flex-1 flex-col gap-2 p-4">
+	<div class="flex min-w-0 flex-1 flex-col gap-1.5 p-4">
 		<div class="flex items-baseline justify-between">
-			<p class="text-xl font-semibold tracking-tight text-gray-900">
+			<p class="text-lg font-semibold tracking-tight text-gray-900">
 				{formatPrice(listing.price)}<span
-					class="text-sm font-normal text-gray-400">/mo</span
+					class="text-xs font-normal text-gray-400">/mo</span
 				>
 			</p>
 			{#if listing.matchScore != null}
-				<p class="text-xs font-semibold uppercase tracking-[0.18em] text-primary">
+				<span class="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">
 					{formatMatchScore(listing.matchScore)}
-				</p>
+				</span>
 			{:else if listing.sqft}
 				<p class="text-xs text-gray-400">
 					{formatPrice(
@@ -169,28 +169,27 @@
 		</div>
 
 		<div
-			class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-600"
+			class="flex flex-wrap items-center gap-x-2 text-[13px] text-gray-500"
 		>
 			<span>{formatBedBath(listing.bedrooms, listing.bathrooms)}</span>
 			{#if listing.sqft}
-				<span class="text-gray-300">|</span>
+				<span class="text-gray-300">·</span>
 				<span>{listing.sqft.toLocaleString()} sqft</span>
 			{/if}
 		</div>
 
-		<div class="flex items-center justify-between gap-3">
-			<p class="truncate text-xs leading-relaxed text-gray-400">
-				{listing.address}
-			</p>
-			<a
-				class="shrink-0 text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700 transition hover:text-sky-900"
-				href={streetViewUrl}
-				target="_blank"
-				rel="noreferrer"
-			>
-				Street View
-			</a>
-		</div>
+		<a
+			class="group/sv flex items-center gap-1 truncate text-xs text-gray-400 transition hover:text-gray-600"
+			href={streetViewUrl}
+			target="_blank"
+			rel="noreferrer"
+		>
+			<svg class="h-3 w-3 shrink-0 text-gray-300 transition group-hover/sv:text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+				<path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+				<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z" />
+			</svg>
+			<span class="truncate">{listing.address}</span>
+		</a>
 
 		{#if listing.requiredSummary}
 			<p class="text-xs font-medium text-amber-700">
@@ -199,9 +198,9 @@
 		{/if}
 
 		{#if listing.highlights?.length}
-			<div class="flex flex-wrap gap-2 pt-1">
+			<div class="flex flex-wrap gap-1.5 pt-0.5">
 				{#each listing.highlights as highlight (highlight)}
-					<span class="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-medium text-gray-600">
+					<span class="inline-flex items-center rounded-md border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] font-medium text-gray-500">
 						{highlight}
 					</span>
 				{/each}

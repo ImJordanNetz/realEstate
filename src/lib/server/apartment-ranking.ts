@@ -28,6 +28,7 @@ export type ApartmentListingCandidate = {
 	amenities: string[];
 	commute_minutes: NullableNumber;
 	proximity_minutes: Record<string, NullableNumber>;
+	nightlife_intensity: NullableNumber;
 };
 
 export type RankingCriterionResult = {
@@ -306,6 +307,51 @@ function buildCriterionResult(params: {
 	target: string;
 }): RankingCriterionResult {
 	return params;
+}
+
+function evaluateNightlifePreference(params: {
+	preference: NonNullable<ApartmentPreferences['nightlife']>['preference'];
+	required: boolean;
+	weight: number;
+	actual: NullableNumber;
+	unknownScore: number;
+}): RankingCriterionResult {
+	const { preference, required, weight, actual, unknownScore } = params;
+	const target = preference === 'quiet' ? '<= 35 / 100' : '>= 65 / 100';
+
+	if (actual == null) {
+		return scoreUnknown(
+			'nightlife',
+			'Nightlife intensity',
+			required,
+			weight,
+			target,
+			'Nightlife intensity is missing for this listing.',
+			unknownScore
+		);
+	}
+
+	const score = preference === 'quiet' ? clamp(1 - actual / 100) : clamp(actual / 100);
+	const passed = preference === 'quiet' ? actual <= 35 : actual >= 65;
+
+	return buildCriterionResult({
+		key: 'nightlife',
+		label: 'Nightlife intensity',
+		required,
+		weight,
+		score,
+		status: passed ? 'pass' : 'fail',
+		reason:
+			preference === 'quiet'
+				? passed
+					? 'This cell has relatively low nightlife activity at night.'
+					: 'This cell has more nightlife activity than a quiet-night preference allows.'
+				: passed
+					? 'This cell has strong nightlife activity nearby.'
+					: 'This cell is quieter than a lively-nightlife preference calls for.',
+		actual: Number(actual.toFixed(1)),
+		target
+	});
 }
 
 function buildParkingCriterion(
@@ -590,6 +636,24 @@ function compileCriteria(
 					targetMinutes,
 					unknownScore
 				)
+		});
+	}
+
+	if (preferences.nightlife) {
+		const nightlife = preferences.nightlife;
+		criteria.push({
+			key: 'nightlife',
+			label: 'Nightlife intensity',
+			required: nightlife.is_dealbreaker,
+			weight: nightlife.importance,
+			evaluate: (listing) =>
+				evaluateNightlifePreference({
+					preference: nightlife.preference,
+					required: nightlife.is_dealbreaker,
+					weight: nightlife.importance,
+					actual: listing.nightlife_intensity,
+					unknownScore
+				})
 		});
 	}
 

@@ -47,6 +47,20 @@
 		return Math.round(value).toString();
 	}
 
+	function normalizeAddress(address: string): string {
+		return address.replace(/,?\s*#\s*[\w-]+/, "").trim();
+	}
+
+	function dedupeListings<T extends { address: string; price: number | null; bedrooms: number | null; bathrooms: number | null; sqft: number | null }>(items: T[]): T[] {
+		const seen = new Set<string>();
+		return items.filter((item) => {
+			const key = `${normalizeAddress(item.address)}|${item.price}|${item.bedrooms}|${item.bathrooms}|${item.sqft}`;
+			if (seen.has(key)) return false;
+			seen.add(key);
+			return true;
+		});
+	}
+
 	function formatCriteriaHighlight(
 		criterion: ApartmentSearchResponse["ranked"][number]["criteria"][number],
 	) {
@@ -67,7 +81,7 @@
 
 	let listingCards = $derived.by((): ListingCardListing[] => {
 		if (!searchResult) {
-			return baseListings.slice(0, 10).map((listing) => ({
+			const mapped = baseListings.map((listing) => ({
 				id: listing.id,
 				address: listing.address,
 				placeId: listing.placeId,
@@ -78,9 +92,10 @@
 				sqft: listing.sqft,
 				price: listing.price,
 			}));
+			return dedupeListings(mapped).slice(0, 10);
 		}
 
-		return searchResult.ranked.map((hit) => {
+		const mapped = searchResult.ranked.map((hit) => {
 			const highlights = hit.criteria
 				.map(formatCriteriaHighlight)
 				.filter((value): value is string => !!value)
@@ -98,12 +113,11 @@
 				sqft: hit.listing.sqft,
 				price: hit.listing.rent,
 				matchScore: hit.total_score,
-				requiredSummary: hit.passes_required
-					? "Meets all required filters"
-					: `${hit.required_pass_count}/${hit.required_total} required checks satisfied`,
+				requiredSummary: null,
 				highlights,
 			};
 		});
+		return dedupeListings(mapped);
 	});
 
 	let listings = $derived.by(() => {
@@ -351,6 +365,12 @@
 							.length,
 				});
 				result = extractionResult;
+
+				// If there are no clarification questions, skip straight to the
+				// left-panel layout so listings slide into view immediately.
+				if (extractionResult.preferences.clarification_questions.length === 0) {
+					questionsSubmitted = true;
+				}
 			} catch (error) {
 				if (controller.signal.aborted) {
 					return;
@@ -716,21 +736,15 @@
 							<h2
 								class="font-serif text-xl tracking-tight text-gray-900"
 							>
-								{searchResult?.mode === "fallback"
-									? "Closest matches"
-									: "Top matches"}
+								Top matches
 							</h2>
 							{#if isSearchingMatches}
 								<p class="mt-1 text-xs text-gray-400">
-									Ranking apartments with live Google Places
-									and route data...
+									Finding the best listings for you...
 								</p>
 							{:else if searchResult}
 								<p class="mt-1 text-xs text-gray-400">
-									{searchResult.ranked.length} ranked listings
-									{searchResult.mode === "fallback"
-										? " · no listing satisfied every hard requirement"
-										: " · ranked after filtering required needs"}
+									{searchResult.ranked.length} listings ranked
 								</p>
 							{:else}
 								<p class="mt-1 text-xs text-gray-400">
@@ -739,31 +753,6 @@
 								</p>
 							{/if}
 						</div>
-						{#if searchResult?.mode === "fallback"}
-							<p
-								class="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-relaxed text-amber-800"
-							>
-								No apartment passed every required rule with the
-								current data, so these are the closest available
-								matches.
-							</p>
-						{/if}
-						{#if usesWalkingOrBiking && searchResult}
-							<p
-								class="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-xs leading-relaxed text-sky-800"
-							>
-								Google notes that walking and bicycling routes
-								may sometimes be missing sidewalks, paths, or
-								local details.
-							</p>
-						{/if}
-						{#if searchError}
-							<p
-								class="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-relaxed text-red-700"
-							>
-								{searchError.message} Showing raw listings instead.
-							</p>
-						{/if}
 						<div
 							class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1"
 						>

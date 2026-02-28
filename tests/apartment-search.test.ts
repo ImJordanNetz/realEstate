@@ -13,6 +13,7 @@ import {
 	type RouteMatrixProvider
 } from '../src/lib/server/apartment-search';
 import type { ApartmentPreferences } from '../src/lib/server/apartment-preferences';
+import { buildNightlifeGrid, type NightlifeGrid } from '../src/lib/server/nightlife-grid';
 
 class StubPlacesProvider implements PlaceSearchProvider {
 	constructor(private readonly responses: Record<string, PlaceCandidate[]>) {}
@@ -64,6 +65,7 @@ function createPreferenceProfile() {
 			max_rent: 3800,
 			ideal_rent: 3500
 		},
+		nightlife: null,
 		commute: {
 			search_query: 'University of California, Irvine',
 			travel_mode: 'bike',
@@ -112,6 +114,25 @@ function createPreferenceProfile() {
 	} satisfies ApartmentPreferences;
 }
 
+function createNightlifeProfile(preference: 'quiet' | 'lively') {
+	return {
+		budget: {
+			max_rent: null,
+			ideal_rent: null
+		},
+		nightlife: {
+			preference,
+			is_dealbreaker: false,
+			importance: 0.9
+		},
+		commute: null,
+		constraints: [],
+		unit_requirements: null,
+		raw_input:
+			preference === 'quiet' ? 'I want quiet nights' : 'I want lively nightlife nearby'
+	} satisfies ApartmentPreferences;
+}
+
 function createListing(
 	id: string,
 	overrides: Partial<ApartmentInventoryListing> = {}
@@ -144,6 +165,16 @@ function createListing(
 		lease_length_months: null,
 		...overrides
 	};
+}
+
+async function createNightlifeGridForListings(
+	listings: ApartmentInventoryListing[],
+	places: PlaceSearchProvider
+) : Promise<NightlifeGrid> {
+	return buildNightlifeGrid({
+		region: buildSearchRegion(listings),
+		places
+	});
 }
 
 test('loadIrvineRentcastListings normalizes the RentCast feed', () => {
@@ -358,4 +389,112 @@ test('searchApartments only routes a shortlist of top candidates', async () => {
 		new Set(['alpha', 'beta'])
 	);
 	assert.ok(routes.calls.every((call) => call.originIds.length <= 2));
+});
+
+test('searchApartments ranks quieter cells higher when the user wants quiet nights', async () => {
+	const preferences = createNightlifeProfile('quiet');
+	const listings = [
+		createListing('alpha', { location: { lat: 33.6802, lng: -117.8202 } }),
+		createListing('beta', { location: { lat: 33.707, lng: -117.792 } })
+	];
+	const places = new StubPlacesProvider({
+		'category:bar': [
+			{
+				id: 'bar-1',
+				name: 'Late Bar',
+				location: { lat: 33.6804, lng: -117.8203 },
+				address: 'Irvine, CA',
+				types: ['bar']
+			}
+		],
+		'category:cocktail bar': [
+			{
+				id: 'bar-1',
+				name: 'Late Bar',
+				location: { lat: 33.6804, lng: -117.8203 },
+				address: 'Irvine, CA',
+				types: ['bar']
+			}
+		],
+		'category:night club': [
+			{
+				id: 'club-1',
+				name: 'Night Club',
+				location: { lat: 33.6807, lng: -117.8206 },
+				address: 'Irvine, CA',
+				types: ['night_club']
+			}
+		],
+		'category:brewery': [],
+		'category:live music venue': [],
+		'category:pub': []
+	});
+	const routes = new StubRoutesProvider({});
+	const nightlifeGrid = await createNightlifeGridForListings(listings, places);
+
+	const result = await searchApartments({
+		preferences,
+		listings,
+		providers: { places, routes },
+		options: { nightlifeGrid }
+	});
+
+	assert.equal(result.mode, 'strict');
+	assert.equal(result.ranked[0]?.listing.id, 'beta');
+	assert.equal(result.ranked[1]?.listing.id, 'alpha');
+	assert.ok(
+		(result.ranked[0]?.derived_metrics.nightlife_intensity ?? 100) <
+			(result.ranked[1]?.derived_metrics.nightlife_intensity ?? 0)
+	);
+	assert.ok(result.ranked.every((hit) => hit.derived_metrics.nightlife_cell_id));
+	assert.equal(routes.calls.length, 0);
+});
+
+test('searchApartments ranks lively cells higher when the user wants nightlife', async () => {
+	const preferences = createNightlifeProfile('lively');
+	const listings = [
+		createListing('alpha', { location: { lat: 33.6802, lng: -117.8202 } }),
+		createListing('beta', { location: { lat: 33.707, lng: -117.792 } })
+	];
+	const places = new StubPlacesProvider({
+		'category:bar': [
+			{
+				id: 'bar-1',
+				name: 'Late Bar',
+				location: { lat: 33.6804, lng: -117.8203 },
+				address: 'Irvine, CA',
+				types: ['bar']
+			}
+		],
+		'category:cocktail bar': [],
+		'category:night club': [
+			{
+				id: 'club-1',
+				name: 'Night Club',
+				location: { lat: 33.6807, lng: -117.8206 },
+				address: 'Irvine, CA',
+				types: ['night_club']
+			}
+		],
+		'category:brewery': [],
+		'category:live music venue': [],
+		'category:pub': []
+	});
+	const routes = new StubRoutesProvider({});
+	const nightlifeGrid = await createNightlifeGridForListings(listings, places);
+
+	const result = await searchApartments({
+		preferences,
+		listings,
+		providers: { places, routes },
+		options: { nightlifeGrid }
+	});
+
+	assert.equal(result.mode, 'strict');
+	assert.equal(result.ranked[0]?.listing.id, 'alpha');
+	assert.equal(result.ranked[1]?.listing.id, 'beta');
+	assert.ok(
+		(result.ranked[0]?.derived_metrics.nightlife_intensity ?? 0) >
+			(result.ranked[1]?.derived_metrics.nightlife_intensity ?? 100)
+	);
 });

@@ -39,6 +39,16 @@ npm run places:enrich
 
 The script reads [`src/lib/server/data/rentcast-raw/irvine-apartments.json`](/Users/jordannetz/Desktop/hackathons/irvine2026/realEstate/src/lib/server/data/rentcast-raw/irvine-apartments.json) and writes matches to [`src/lib/server/data/google-place-ids.json`](/Users/jordannetz/Desktop/hackathons/irvine2026/realEstate/src/lib/server/data/google-place-ids.json). The normalized inventory loader then exposes each match as `place_id` on the listing objects.
 
+## Precomputing the nightlife grid
+
+To build the static 500m nightlife artifact used by ranking, set `GOOGLE_API_KEY` in `.env` and run:
+
+```sh
+npm run nightlife:grid
+```
+
+The script reads the active Irvine listing region and writes the generated grid to [`src/lib/server/data/irvine-nightlife-grid-500m.json`](/Users/jordannetz/Desktop/hackathons/irvine2026/realEstate/src/lib/server/data/irvine-nightlife-grid-500m.json). Runtime search loads this file directly instead of querying Google Places on each request.
+
 ## Building
 
 To create a production version of your app:

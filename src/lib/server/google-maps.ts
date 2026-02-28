@@ -159,6 +159,23 @@ function constraintQueryToIncludedType(query: string) {
 			return 'grocery_store';
 		case 'gym':
 			return 'gym';
+		case 'bar':
+		case 'bars':
+		case 'cocktail bar':
+		case 'cocktail bars':
+		case 'pub':
+		case 'pubs':
+		case 'lounge':
+		case 'lounges':
+			return 'bar';
+		case 'night club':
+		case 'night clubs':
+		case 'nightclub':
+		case 'nightclubs':
+			return 'night_club';
+		case 'brewery':
+		case 'breweries':
+			return 'brewery';
 		default:
 			return null;
 	}

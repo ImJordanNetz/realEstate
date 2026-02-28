@@ -2,6 +2,11 @@ import { z } from 'zod';
 import type { ApartmentPreferences } from '$lib/server/apartment-preferences';
 import type { ApartmentInventoryListing } from '$lib/server/apartment-inventory';
 import {
+	loadDefaultNightlifeGrid,
+	lookupNightlifeIntensity,
+	type NightlifeGrid
+} from '$lib/server/nightlife-grid';
+import {
 	buildApartmentConstraintKey,
 	rankApartments,
 	type ApartmentRankingOptions,
@@ -44,7 +49,9 @@ export const routeMatrixCellSchema = z.object({
 
 export const apartmentDerivedMetricsSchema = z.object({
 	commute_minutes: z.number().nonnegative().nullable(),
-	proximity_minutes: z.record(z.string(), z.number().nonnegative().nullable())
+	proximity_minutes: z.record(z.string(), z.number().nonnegative().nullable()),
+	nightlife_intensity: z.number().min(0).max(100).nullable(),
+	nightlife_cell_id: z.string().nullable()
 });
 
 export type GeoPoint = z.infer<typeof geoPointSchema>;
@@ -123,6 +130,7 @@ export type ApartmentSearchOptions = {
 	shortlistCount?: number;
 	ranking?: ApartmentRankingOptions;
 	departureTime?: string;
+	nightlifeGrid?: NightlifeGrid | null;
 };
 
 type RouteSummary = {
@@ -230,7 +238,9 @@ function createDerivedMetricsStore(listings: ApartmentInventoryListing[]) {
 			listing.id,
 			apartmentDerivedMetricsSchema.parse({
 				commute_minutes: null,
-				proximity_minutes: {}
+				proximity_minutes: {},
+				nightlife_intensity: null,
+				nightlife_cell_id: null
 			})
 		);
 	}
@@ -296,8 +306,27 @@ function toRankingListing(
 		pets: listing.pets,
 		amenities: listing.amenities,
 		commute_minutes: derivedMetrics.commute_minutes,
-		proximity_minutes: derivedMetrics.proximity_minutes
+		proximity_minutes: derivedMetrics.proximity_minutes,
+		nightlife_intensity: derivedMetrics.nightlife_intensity
 	};
+}
+
+function applyNightlifeMetrics(params: {
+	listings: ApartmentInventoryListing[];
+	metricsByListingId: Map<string, ApartmentDerivedMetrics>;
+	grid: NightlifeGrid;
+}) {
+	for (const listing of params.listings) {
+		const metrics = params.metricsByListingId.get(listing.id);
+
+		if (!metrics) {
+			continue;
+		}
+
+		const nightlife = lookupNightlifeIntensity(params.grid, listing.location);
+		metrics.nightlife_intensity = nightlife.intensity;
+		metrics.nightlife_cell_id = nightlife.cellId;
+	}
 }
 
 function estimateBestMinutesForPlaces(
@@ -328,9 +357,18 @@ function selectShortlistedListings(params: {
 	listings: ApartmentInventoryListing[];
 	commutePlaces: PlaceCandidate[];
 	constraintPlacesByKey: Map<string, PlaceCandidate[]>;
+	nightlifeGrid: NightlifeGrid | null;
 	options: ApartmentSearchOptions;
 }) {
 	const approximateMetricsByListingId = createDerivedMetricsStore(params.listings);
+
+	if (params.nightlifeGrid) {
+		applyNightlifeMetrics({
+			listings: params.listings,
+			metricsByListingId: approximateMetricsByListingId,
+			grid: params.nightlifeGrid
+		});
+	}
 
 	for (const listing of params.listings) {
 		const metrics = approximateMetricsByListingId.get(listing.id);
@@ -508,11 +546,31 @@ export async function searchApartments(params: {
 		})
 	);
 
+	let nightlifeGrid: NightlifeGrid | null = null;
+
+	if (preferences.nightlife) {
+		if (options.nightlifeGrid !== undefined) {
+			nightlifeGrid = options.nightlifeGrid;
+		} else {
+			try {
+				nightlifeGrid = loadDefaultNightlifeGrid();
+			} catch (error) {
+				const message =
+					error instanceof Error ? error.message : 'Unable to load the nightlife grid artifact.';
+
+				throw new Error(
+					`Nightlife ranking requires a precomputed grid artifact. Run "npm run nightlife:grid" first. ${message}`
+				);
+			}
+		}
+	}
+
 	const shortlistedListings = selectShortlistedListings({
 		preferences,
 		listings,
 		commutePlaces,
 		constraintPlacesByKey,
+		nightlifeGrid,
 		options
 	});
 	log('search', 'shortlist_selected', {
@@ -525,6 +583,14 @@ export async function searchApartments(params: {
 		createMatchedConstraintPlacesStore(shortlistedListings);
 	const originIds = shortlistedListings.map((listing) => listing.id);
 	let commutePlaceByListingId: Record<string, PlaceCandidate | null> = {};
+
+	if (nightlifeGrid) {
+		applyNightlifeMetrics({
+			listings: shortlistedListings,
+			metricsByListingId: derivedMetricsByListingId,
+			grid: nightlifeGrid
+		});
+	}
 
 	if (preferences.commute) {
 		const routeSummary = await computeBestRouteSummary({
