@@ -2,6 +2,24 @@
 	import ArrowRight from "@lucide/svelte/icons/arrow-right";
 
 	let query = $state("");
+
+	const suggestions = [
+		"Walking distance to UCI",
+		"Near a climbing gym",
+		"Bikeable neighborhood",
+		"Close to parks & trails",
+		"Quiet area, good for studying",
+		"Near coffee shops",
+		"Pet-friendly with dog parks",
+		"Short commute to Irvine Spectrum",
+	];
+
+	function addSuggestion(text: string) {
+		if (query.length > 0 && !query.endsWith(", ") && !query.endsWith(",")) {
+			query += ", ";
+		}
+		query += text.toLowerCase();
+	}
 </script>
 
 <section class="relative flex min-h-[80vh] flex-col items-center justify-center overflow-hidden px-6 py-24">
@@ -38,7 +56,7 @@
 				bind:value={query}
 				placeholder="I bike everywhere, love climbing, and need to be near UCI..."
 				rows="1"
-				class="block w-full resize-none bg-transparent px-5 pt-4 pb-14 text-base text-foreground placeholder:text-muted-foreground focus:outline-none"
+				class="block w-full resize-none bg-transparent px-5 pt-4 pb-14 text-base text-foreground placeholder:text-muted-foreground/40 focus:outline-none"
 				oninput={(e) => {
 					const target = e.currentTarget;
 					target.style.height = 'auto';
@@ -52,6 +70,21 @@
 					<ArrowRight class="size-4" />
 				</button>
 			</div>
+		</div>
+	</div>
+
+	<!-- Suggestion pills -->
+	<div class="relative mt-5 flex max-w-lg flex-col items-center gap-3">
+		<p class="text-sm text-muted-foreground/70 italic">Try a few — or just say it in your own words</p>
+		<div class="flex flex-wrap justify-center gap-2">
+			{#each suggestions as suggestion}
+				<button
+					onclick={() => addSuggestion(suggestion)}
+					class="rounded-full border border-border/60 bg-background/60 px-3.5 py-1.5 text-sm text-muted-foreground backdrop-blur-sm transition-all hover:border-primary/40 hover:bg-primary/5 hover:text-foreground"
+				>
+					{suggestion}
+				</button>
+			{/each}
 		</div>
 	</div>
 </section>
