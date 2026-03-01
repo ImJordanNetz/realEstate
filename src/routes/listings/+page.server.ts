@@ -1,5 +1,6 @@
 import type { PageServerLoad } from './$types';
 import { loadAllRentcastListings } from '$lib/server/apartment-inventory';
+import { loadApartmentInteriorPhotos } from '$lib/server/apartment-interiors';
 import { loadDefaultNightlifeGrid } from '$lib/server/nightlife-grid';
 
 export type MapListing = {
@@ -33,6 +34,7 @@ function loadListings(): MapListing[] {
 }
 
 const listings = loadListings();
+const interiorPhotos = loadApartmentInteriorPhotos();
 
 function loadNightlifeCells(): { lat: number; lng: number; intensity: number }[] {
 	try {
@@ -57,6 +59,7 @@ export const load: PageServerLoad = async ({ url }) => {
 	return {
 		prompt,
 		listings,
-		nightlifeCells
+		nightlifeCells,
+		interiorPhotos
 	};
 };

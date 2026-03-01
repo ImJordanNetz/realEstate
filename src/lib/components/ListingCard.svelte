@@ -1,9 +1,25 @@
 <script lang="ts">
 	import { browser } from "$app/environment";
+	import {
+		Carousel,
+		CarouselContent,
+		CarouselItem,
+		CarouselNext,
+		CarouselPrevious,
+	} from "$lib/components/ui/carousel";
 
 	export type ListingHighlight = {
 		text: string;
 		status: 'pass' | 'fail' | 'unknown';
+	};
+
+	type RepresentativePhoto = {
+		roomType: string;
+		localPath: string;
+		alt: string;
+		photographer: string;
+		photographerUrl: string;
+		pexelsUrl: string;
 	};
 
 	export type ListingCardListing = {
@@ -19,6 +35,7 @@
 		matchScore?: number;
 		requiredSummary?: string | null;
 		highlights?: ListingHighlight[];
+		representativePhotos?: RepresentativePhoto[];
 	};
 
 	interface Props {
@@ -90,6 +107,15 @@
 	}
 
 	const zillowUrl = $derived(buildZillowUrl(listing.address));
+	const representativePhotos = $derived(listing.representativePhotos ?? []);
+	const fallbackPhoto = $derived(representativePhotos[0] ?? null);
+	const usesRepresentativeFallback = $derived(!photo?.photoUrl && !!fallbackPhoto);
+	const showRepresentativeCarousel = $derived(expanded && representativePhotos.length > 0);
+	const displayPhotoUrl = $derived(photo?.photoUrl ?? fallbackPhoto?.localPath ?? null);
+
+	function formatRoomType(roomType: string) {
+		return roomType.replace(/-/g, " ");
+	}
 
 	$effect(() => {
 		photo = null;
@@ -130,16 +156,54 @@
 	onclick={onclick}
 >
 	<div
-		class="relative shrink-0 bg-gradient-to-br from-muted to-muted/60 transition-all duration-300 {expanded ? 'w-full' : 'w-28 self-stretch'}"
-		style={expanded ? 'height: 45%;' : ''}
+		class="relative shrink-0 overflow-hidden bg-gradient-to-br from-muted to-muted/60 transition-all duration-300 {expanded ? 'aspect-video w-full' : 'w-28 self-stretch'}"
 	>
-		{#if photo?.photoUrl}
+		{#if showRepresentativeCarousel}
+			<Carousel
+				class="h-full w-full"
+				opts={{ align: "start", loop: representativePhotos.length > 1 }}
+			>
+				<CarouselContent class="-ms-0 h-full">
+					{#each representativePhotos as representativePhoto (representativePhoto.localPath)}
+						<CarouselItem class="h-full ps-0">
+							<div class="relative h-full w-full">
+								<img
+									class="h-full w-full object-cover"
+									src={representativePhoto.localPath}
+									alt={`Representative interior photo for ${listing.address}: ${representativePhoto.alt}`}
+									loading="lazy"
+								/>
+								<div class="absolute inset-x-3 top-3 flex items-center justify-between gap-2">
+									<span class="rounded-full bg-black/60 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white backdrop-blur-sm">
+										Representative interior
+									</span>
+									<span class="rounded-full bg-black/45 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.12em] text-white/90 backdrop-blur-sm">
+										{formatRoomType(representativePhoto.roomType)}
+									</span>
+								</div>
+							</div>
+						</CarouselItem>
+					{/each}
+				</CarouselContent>
+				{#if representativePhotos.length > 1}
+					<CarouselPrevious class="start-3 border-white/20 bg-black/45 text-white hover:bg-black/60" />
+					<CarouselNext class="end-3 border-white/20 bg-black/45 text-white hover:bg-black/60" />
+				{/if}
+			</Carousel>
+		{:else if displayPhotoUrl}
 			<img
 				class="h-full w-full object-cover"
-				src={photo.photoUrl}
-				alt={`Exterior photo of ${listing.address}`}
+				src={displayPhotoUrl}
+				alt={photo?.photoUrl
+					? `Exterior photo of ${listing.address}`
+					: `Representative interior photo for ${listing.address}`}
 				loading="lazy"
 			/>
+			{#if usesRepresentativeFallback}
+				<span class="absolute left-2 top-2 rounded-full bg-black/60 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white backdrop-blur-sm">
+					Representative interior
+				</span>
+			{/if}
 		{:else}
 			{#if isPhotoLoading}
 				<div class="absolute inset-0 animate-pulse bg-gradient-to-br from-muted via-card to-muted"></div>
@@ -218,6 +282,12 @@
 		{#if listing.requiredSummary}
 			<p class="font-medium text-amber-700 {expanded ? 'text-sm' : 'text-xs'}">
 				{listing.requiredSummary}
+			</p>
+		{/if}
+
+		{#if expanded && representativePhotos.length > 0}
+			<p class="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+				Representative interiors, not photos of the exact unit
 			</p>
 		{/if}
 

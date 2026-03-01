@@ -40,6 +40,17 @@
 
 	let baseListings = $derived(data.listings);
 	let nightlifeCells = $derived(data.nightlifeCells);
+	let interiorPhotos = $derived(data.interiorPhotos);
+
+	type RepresentativeInteriorPhoto = PageData["interiorPhotos"][number];
+	const ROOM_TYPE_ORDER = [
+		"living-room",
+		"kitchen",
+		"bedroom",
+		"bathroom",
+		"dining",
+		"balcony",
+	] as const;
 
 	let nightlifeGeoJSON = $derived.by(
 		(): GeoJSON.FeatureCollection<GeoJSON.Point> => ({
@@ -82,6 +93,23 @@
 		return address.replace(/,?\s*#\s*[\w-]+/, "").trim();
 	}
 
+	function hashString(value: string) {
+		let hash = 0;
+		for (let i = 0; i < value.length; i += 1) {
+			hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+		}
+		return hash;
+	}
+
+	function rotateItems<T>(items: T[], offset: number) {
+		if (items.length === 0) return [];
+		const normalizedOffset = offset % items.length;
+		return [
+			...items.slice(normalizedOffset),
+			...items.slice(0, normalizedOffset),
+		];
+	}
+
 	function dedupeListings<T extends { address: string; price: number | null; bedrooms: number | null; bathrooms: number | null; sqft: number | null }>(items: T[]): T[] {
 		const seen = new Set<string>();
 		return items.filter((item) => {
@@ -90,6 +118,47 @@
 			seen.add(key);
 			return true;
 		});
+	}
+
+	let interiorPhotosByRoom = $derived.by(() => {
+		const groups = new globalThis.Map<string, RepresentativeInteriorPhoto[]>();
+		for (const photo of interiorPhotos) {
+			const group = groups.get(photo.roomType) ?? [];
+			group.push(photo);
+			if (!groups.has(photo.roomType)) {
+				groups.set(photo.roomType, group);
+			}
+		}
+		return groups;
+	});
+
+	function buildRepresentativePhotoSet(listingId: string) {
+		if (interiorPhotos.length === 0) return [];
+
+		const seed = hashString(listingId);
+		const selected: RepresentativeInteriorPhoto[] = [];
+		const seen = new Set<string>();
+
+		for (const [roomIndex, roomType] of ROOM_TYPE_ORDER.entries()) {
+			const roomPhotos = interiorPhotosByRoom.get(roomType) ?? [];
+			if (roomPhotos.length === 0) continue;
+
+			const photo = roomPhotos[(seed + roomIndex) % roomPhotos.length];
+			if (seen.has(photo.localPath)) continue;
+
+			selected.push(photo);
+			seen.add(photo.localPath);
+		}
+
+		for (const photo of rotateItems(interiorPhotos, seed % interiorPhotos.length)) {
+			if (selected.length >= Math.min(6, interiorPhotos.length)) break;
+			if (seen.has(photo.localPath)) continue;
+
+			selected.push(photo);
+			seen.add(photo.localPath);
+		}
+
+		return rotateItems(selected, seed % selected.length);
 	}
 
 	function formatCriteriaHighlight(
@@ -123,6 +192,7 @@
 				bathrooms: listing.bathrooms,
 				sqft: listing.sqft,
 				price: listing.price,
+				representativePhotos: buildRepresentativePhotoSet(listing.id),
 			}));
 			return dedupeListings(mapped).slice(0, 10);
 		}
@@ -147,6 +217,7 @@
 				matchScore: hit.total_score,
 				requiredSummary: null,
 				highlights,
+				representativePhotos: buildRepresentativePhotoSet(hit.listing.id),
 			};
 		});
 		return dedupeListings(mapped);

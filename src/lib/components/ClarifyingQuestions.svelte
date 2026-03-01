@@ -174,7 +174,7 @@
 
 	<!-- Navigation -->
 	<div
-		class="flex items-center justify-between border-t border-border pt-4"
+		class="mt-6 flex items-center justify-between border-t border-border pt-4"
 	>
 		<button
 			type="button"
