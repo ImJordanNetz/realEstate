@@ -7,10 +7,10 @@ import {
 	type PlaceSearchRequest
 } from '../src/lib/server/apartment-search';
 import { loadAllRentcastListings } from '../src/lib/server/apartment-inventory';
+import { join } from 'node:path';
 import {
 	buildNightlifeGrid,
-	createNightlifeGridArtifact,
-	getDefaultNightlifeGridPath
+	createNightlifeGridArtifact
 } from '../src/lib/server/nightlife-grid';
 
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
@@ -20,7 +20,7 @@ if (!GOOGLE_API_KEY) {
 	process.exit(1);
 }
 
-const OUTPUT_PATH = getDefaultNightlifeGridPath();
+const OUTPUT_PATH = join(process.cwd(), 'src/lib/server/data/irvine-nightlife-grid-500m.json');
 const REGION_PADDING_METERS = Number(process.env.NIGHTLIFE_GRID_PADDING_METERS ?? 2_000);
 const CELL_SIZE_METERS = Number(process.env.NIGHTLIFE_GRID_CELL_SIZE_METERS ?? 500);
 const GOOGLE_PLACES_TEXT_SEARCH_URL = 'https://places.googleapis.com/v1/places:searchText';

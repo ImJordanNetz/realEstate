@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-	loadIrvineRentcastListings,
+	loadAllRentcastListings,
 	type ApartmentInventoryListing
 } from '../src/lib/server/apartment-inventory';
 import { buildApartmentConstraintKey } from '../src/lib/server/apartment-ranking';
@@ -214,10 +214,8 @@ async function createNightlifeGridForListings(
 	});
 }
 
-test('loadIrvineRentcastListings normalizes the RentCast feed', () => {
-	const listings = loadIrvineRentcastListings();
-
-	assert.equal(listings.length, 500);
+test('loadAllRentcastListings normalizes the RentCast feed', () => {
+	const listings = loadAllRentcastListings();
 	assert.equal(listings[0]?.source, 'rentcast');
 	assert.ok(listings.every((listing) => listing.location.lat !== 0 && listing.location.lng !== 0));
 	assert.ok(listings.every((listing) => listing.amenities.length === 0));

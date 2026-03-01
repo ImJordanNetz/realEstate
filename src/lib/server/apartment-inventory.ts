@@ -1,6 +1,9 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { z } from 'zod';
+import irvineApartments from '$lib/server/data/rentcast-raw/irvine-apartments.json';
+import anaheimApartments from '$lib/server/data/rentcast-raw/anaheim-apartments.json';
+import costaMesaApartments from '$lib/server/data/rentcast-raw/costa-mesa-apartments.json';
+import santaAnaApartments from '$lib/server/data/rentcast-raw/santa-ana-apartments.json';
+import googlePlaceIdsData from '$lib/server/data/google-place-ids.json';
 
 export const apartmentLocationSchema = z.object({
 	lat: z.number(),
@@ -130,51 +133,30 @@ export function createEmptyGooglePlaceIdStore(): GooglePlaceIdStore {
 	};
 }
 
-export function loadGooglePlaceIdStore(filePath: string): GooglePlaceIdStore {
+export function loadGooglePlaceIdStore(): GooglePlaceIdStore {
 	try {
-		const raw = readFileSync(filePath, 'utf-8');
-		return googlePlaceIdStoreSchema.parse(JSON.parse(raw));
+		return googlePlaceIdStoreSchema.parse(googlePlaceIdsData);
 	} catch {
 		return createEmptyGooglePlaceIdStore();
 	}
 }
 
-export function loadRentcastListingsFromFile(
-	filePath: string,
-	googlePlaceIdsPath = getDefaultGooglePlaceIdsPath()
-) {
-	const raw = readFileSync(filePath, 'utf-8');
-	const parsed = rentcastListingCollectionSchema.parse(JSON.parse(raw));
-	const googlePlaces = loadGooglePlaceIdStore(googlePlaceIdsPath);
-
+function normalizeRentcastCollection(
+	data: unknown[],
+	googlePlaces: GooglePlaceIdStore
+): ApartmentInventoryListing[] {
+	const parsed = rentcastListingCollectionSchema.parse(data);
 	return parsed
 		.filter((listing) => listing.status === 'Active' && !!listing.latitude && !!listing.longitude)
 		.map((listing) => normalizeRentcastListing(listing, googlePlaces.matches[listing.id]));
 }
 
-export function getDefaultIrvineRentcastPath() {
-	return join(process.cwd(), 'src/lib/server/data/rentcast-raw/irvine-apartments.json');
-}
-
-export function getDefaultGooglePlaceIdsPath() {
-	return join(process.cwd(), 'src/lib/server/data/google-place-ids.json');
-}
-
-export function loadIrvineRentcastListings() {
-	return loadRentcastListingsFromFile(getDefaultIrvineRentcastPath());
-}
-
-export function getRentcastRawDir() {
-	return join(process.cwd(), 'src/lib/server/data/rentcast-raw');
-}
-
 export function loadAllRentcastListings(): ApartmentInventoryListing[] {
-	const dir = getRentcastRawDir();
-	const files = readdirSync(dir).filter((f) => f.endsWith('.json'));
+	const googlePlaces = loadGooglePlaceIdStore();
+	const allRaw = [irvineApartments, anaheimApartments, costaMesaApartments, santaAnaApartments];
 	const all: ApartmentInventoryListing[] = [];
-	for (const file of files) {
-		const listings = loadRentcastListingsFromFile(join(dir, file));
-		all.push(...listings);
+	for (const data of allRaw) {
+		all.push(...normalizeRentcastCollection(data, googlePlaces));
 	}
 	return all;
 }

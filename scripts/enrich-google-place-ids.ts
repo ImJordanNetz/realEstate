@@ -1,12 +1,12 @@
 import 'dotenv/config';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
 	createEmptyGooglePlaceIdStore,
-	getDefaultGooglePlaceIdsPath,
-	getDefaultIrvineRentcastPath,
-	loadGooglePlaceIdStore,
+	googlePlaceIdStoreSchema,
 	rentcastListingCollectionSchema,
 	type GooglePlaceMatch,
+	type GooglePlaceIdStore,
 	type RentcastListing
 } from '../src/lib/server/apartment-inventory';
 
@@ -17,8 +17,8 @@ if (!GOOGLE_API_KEY) {
 	process.exit(1);
 }
 
-const RENTCAST_PATH = getDefaultIrvineRentcastPath();
-const OUTPUT_PATH = getDefaultGooglePlaceIdsPath();
+const RENTCAST_PATH = join(process.cwd(), 'src/lib/server/data/rentcast-raw/irvine-apartments.json');
+const OUTPUT_PATH = join(process.cwd(), 'src/lib/server/data/google-place-ids.json');
 const REQUEST_DELAY_MS = Number(process.env.GOOGLE_PLACES_THROTTLE_MS ?? 125);
 const NEARBY_RADIUS_METERS = Number(process.env.GOOGLE_PLACES_RADIUS_METERS ?? 250);
 const MIN_CONFIDENCE = Number(process.env.GOOGLE_PLACES_MIN_CONFIDENCE ?? 0.55);
@@ -53,6 +53,15 @@ type PropertyGroup = {
 function loadRentcastListings() {
 	const raw = readFileSync(RENTCAST_PATH, 'utf-8');
 	return rentcastListingCollectionSchema.parse(JSON.parse(raw));
+}
+
+function loadGooglePlaceIdStoreFromFile(filePath: string): GooglePlaceIdStore {
+	try {
+		const raw = readFileSync(filePath, 'utf-8');
+		return googlePlaceIdStoreSchema.parse(JSON.parse(raw));
+	} catch {
+		return createEmptyGooglePlaceIdStore();
+	}
 }
 
 function normalizeText(value: string) {
@@ -276,7 +285,7 @@ function sleep(milliseconds: number) {
 async function main() {
 	const listings = loadRentcastListings();
 	const groups = groupListingsByProperty(listings);
-	const store = loadGooglePlaceIdStore(OUTPUT_PATH);
+	const store = loadGooglePlaceIdStoreFromFile(OUTPUT_PATH);
 	const nextStore = {
 		...createEmptyGooglePlaceIdStore(),
 		...store,

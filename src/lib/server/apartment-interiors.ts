@@ -1,6 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { z } from 'zod';
+import apartmentInteriorsData from '$lib/server/data/apartment-interiors.json';
 
 export const representativeInteriorPhotoSchema = z.object({
 	id: z.number().int().nonnegative(),
@@ -24,16 +23,9 @@ export const representativeInteriorManifestSchema = z.object({
 export type RepresentativeInteriorPhoto = z.infer<typeof representativeInteriorPhotoSchema>;
 export type RepresentativeInteriorManifest = z.infer<typeof representativeInteriorManifestSchema>;
 
-export function getDefaultApartmentInteriorsPath() {
-	return join(process.cwd(), 'src/lib/server/data/apartment-interiors.json');
-}
-
-export function loadApartmentInteriorManifest(
-	filePath = getDefaultApartmentInteriorsPath()
-): RepresentativeInteriorManifest {
+export function loadApartmentInteriorManifest(): RepresentativeInteriorManifest {
 	try {
-		const raw = readFileSync(filePath, 'utf-8');
-		return representativeInteriorManifestSchema.parse(JSON.parse(raw));
+		return representativeInteriorManifestSchema.parse(apartmentInteriorsData);
 	} catch {
 		return {
 			downloadedAt: new Date(0).toISOString(),
@@ -43,6 +35,6 @@ export function loadApartmentInteriorManifest(
 	}
 }
 
-export function loadApartmentInteriorPhotos(filePath?: string): RepresentativeInteriorPhoto[] {
-	return loadApartmentInteriorManifest(filePath).photos;
+export function loadApartmentInteriorPhotos(): RepresentativeInteriorPhoto[] {
+	return loadApartmentInteriorManifest().photos;
 }

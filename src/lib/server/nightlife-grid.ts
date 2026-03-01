@@ -1,6 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { z } from 'zod';
+import nightlifeGridData from '$lib/server/data/irvine-nightlife-grid-500m.json';
 import type {
 	GeoPoint,
 	PlaceCandidate,
@@ -334,13 +333,8 @@ export function createNightlifeGridArtifact(params: {
 	});
 }
 
-export function getDefaultNightlifeGridPath() {
-	return join(process.cwd(), 'src/lib/server/data/irvine-nightlife-grid-500m.json');
-}
-
-export function loadNightlifeGridArtifact(filePath = getDefaultNightlifeGridPath()): NightlifeGridArtifact {
-	const raw = readFileSync(filePath, 'utf-8');
-	return nightlifeGridArtifactSchema.parse(JSON.parse(raw));
+export function loadNightlifeGridArtifact(): NightlifeGridArtifact {
+	return nightlifeGridArtifactSchema.parse(nightlifeGridData);
 }
 
 export function loadDefaultNightlifeGrid() {
