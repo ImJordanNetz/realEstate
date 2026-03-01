@@ -62,8 +62,7 @@
 		"dining",
 		"balcony",
 	] as const;
-	const DEFAULT_VISIBLE_LISTING_LIMIT = 10;
-	const SEARCH_VISIBLE_LISTING_LIMIT = 20;
+	const SEARCH_VISIBLE_LISTING_LIMIT = 48;
 
 	let nightlifeGeoJSON = $derived.by(
 		(): GeoJSON.FeatureCollection<GeoJSON.Point> => ({
@@ -395,10 +394,7 @@
 				price: listing.price,
 				representativePhotos: buildRepresentativePhotoSet(listing.id),
 			}));
-			return sortFavoritesFirst(dedupeListings(mapped)).slice(
-				0,
-				DEFAULT_VISIBLE_LISTING_LIMIT,
-			);
+			return sortFavoritesFirst(dedupeListings(mapped));
 		}
 
 		const mapped = searchResult.ranked.map((hit) => {
@@ -446,7 +442,7 @@
 	function getVisibleListingLimit() {
 		return searchResult
 			? SEARCH_VISIBLE_LISTING_LIMIT
-			: DEFAULT_VISIBLE_LISTING_LIMIT;
+			: Infinity;
 	}
 
 	let priceRange = $derived.by(() => {
@@ -1468,7 +1464,7 @@
 										</p>
 									{:else}
 										<p class="mt-1 text-xs text-muted-foreground">
-											{Math.min(DEFAULT_VISIBLE_LISTING_LIMIT, listings.length)} of {listings.length}
+											{displayedListingCards.length} of {listings.length}
 											listings
 										</p>
 									{/if}
