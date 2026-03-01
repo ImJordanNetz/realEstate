@@ -1,4 +1,3 @@
-import { env } from '$env/dynamic/private';
 import { z } from 'zod';
 import type {
 	PlaceCandidate,
@@ -9,6 +8,7 @@ import type {
 	RouteMatrixRequest,
 	SearchLogger
 } from '$lib/server/apartment-search';
+import { getPrivateEnv } from '$lib/server/runtime-env';
 
 const GOOGLE_PLACES_TEXT_SEARCH_URL = 'https://places.googleapis.com/v1/places:searchText';
 const GOOGLE_PLACE_DETAILS_URL = 'https://places.googleapis.com/v1/places';
@@ -19,7 +19,10 @@ const GOOGLE_ROUTES_COMPUTE_URL =
 const PLACE_CACHE_TTL_MS = 1000 * 60 * 60 * 12;
 const PHOTO_CACHE_TTL_MS = 1000 * 60 * 60 * 12;
 const ROUTE_CACHE_TTL_MS = 1000 * 60 * 30;
+const FALLBACK_ROUTE_CACHE_TTL_MS = 1000 * 60 * 5;
 const DIRECTIONS_CACHE_TTL_MS = 1000 * 60 * 30;
+const RATE_LIMIT_RETRY_ATTEMPTS = 2;
+const RATE_LIMIT_RETRY_BASE_MS = 250;
 const placeCache = new Map<string, { expiresAt: number; value: PlaceCandidate[] }>();
 const photoCache = new Map<string, { expiresAt: number; value: GooglePlacePhoto }>();
 const routeCache = new Map<string, { expiresAt: number; value: RouteMatrixCell[] }>();
@@ -50,10 +53,17 @@ const googlePlaceSearchResponseSchema = z.object({
 
 const googleRouteMatrixResponseSchema = z.array(
 	z.object({
-		originIndex: z.number().int().nonnegative(),
-		destinationIndex: z.number().int().nonnegative(),
+		originIndex: z.number().int().nonnegative().optional(),
+		destinationIndex: z.number().int().nonnegative().optional(),
 		duration: z.string().optional(),
-		condition: z.string().optional()
+		condition: z.string().optional(),
+		status: z
+			.object({
+				code: z.number().int().optional(),
+				message: z.string().optional()
+			})
+			.passthrough()
+			.optional()
 	})
 );
 
@@ -97,7 +107,7 @@ function logGoogleStep(
 }
 
 function getGoogleApiKey() {
-	const apiKey = env.GOOGLE_API_KEY?.trim();
+	const apiKey = getPrivateEnv('GOOGLE_API_KEY')?.trim();
 
 	if (!apiKey) {
 		throw new Error('GOOGLE_API_KEY is not configured.');
@@ -151,6 +161,44 @@ function normalizeExternalUri(uri: string | undefined) {
 	}
 
 	return uri;
+}
+
+function toRadians(value: number) {
+	return (value * Math.PI) / 180;
+}
+
+function haversineDistanceMeters(
+	a: { lat: number; lng: number },
+	b: { lat: number; lng: number }
+) {
+	const earthRadiusMeters = 6_371_000;
+	const dLat = toRadians(b.lat - a.lat);
+	const dLng = toRadians(b.lng - a.lng);
+	const lat1 = toRadians(a.lat);
+	const lat2 = toRadians(b.lat);
+	const sinLat = Math.sin(dLat / 2);
+	const sinLng = Math.sin(dLng / 2);
+	const h = sinLat * sinLat + Math.cos(lat1) * Math.cos(lat2) * sinLng * sinLng;
+
+	return 2 * earthRadiusMeters * Math.asin(Math.sqrt(h));
+}
+
+function estimateTravelMinutes(
+	distanceMeters: number,
+	travelMode: RouteMatrixRequest['travelMode']
+) {
+	const distanceKilometers = distanceMeters / 1000;
+
+	switch (travelMode) {
+		case 'walk':
+			return (distanceKilometers / 4.8) * 60 * 1.25;
+		case 'bike':
+			return (distanceKilometers / 15) * 60 * 1.2;
+		case 'drive':
+			return (distanceKilometers / 32) * 60 * 1.45 + 3;
+		case 'transit':
+			return (distanceKilometers / 20) * 60 * 1.6 + 8;
+	}
 }
 
 function constraintQueryToIncludedType(query: string) {
@@ -330,6 +378,38 @@ async function readGoogleError(response: Response) {
 	return `${response.status} ${response.statusText}`;
 }
 
+function parseRetryAfterMs(value: string | null) {
+	if (!value) {
+		return null;
+	}
+
+	const seconds = Number(value);
+
+	if (Number.isFinite(seconds)) {
+		return Math.max(0, Math.round(seconds * 1000));
+	}
+
+	const timestamp = Date.parse(value);
+
+	return Number.isFinite(timestamp) ? Math.max(0, timestamp - Date.now()) : null;
+}
+
+function wait(ms: number) {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+type GoogleRequestError = Error & {
+	status?: number;
+	retryAfterMs?: number | null;
+};
+
+function isRateLimitError(error: unknown): error is GoogleRequestError {
+	return (
+		error instanceof Error &&
+		((error as GoogleRequestError).status === 429 || error.message.includes('429'))
+	);
+}
+
 async function fetchGooglePlaces(input: PlaceSearchRequest) {
 	const apiKey = getGoogleApiKey();
 	const response = await fetch(GOOGLE_PLACES_TEXT_SEARCH_URL, {
@@ -480,7 +560,7 @@ async function fetchRouteMatrixBatch(input: RouteMatrixRequest) {
 		headers: {
 			'content-type': 'application/json',
 			'X-Goog-Api-Key': apiKey,
-			'X-Goog-FieldMask': 'originIndex,destinationIndex,duration,condition'
+			'X-Goog-FieldMask': 'originIndex,destinationIndex,status,duration,condition'
 		},
 		body: JSON.stringify({
 			origins: input.origins.map((origin) => ({
@@ -515,10 +595,28 @@ async function fetchRouteMatrixBatch(input: RouteMatrixRequest) {
 	});
 
 	if (!response.ok) {
-		throw new Error(`Google Routes matrix failed: ${await readGoogleError(response)}`);
+		const error = new Error(
+			`Google Routes matrix failed: ${await readGoogleError(response)}`
+		) as GoogleRequestError;
+		error.status = response.status;
+		error.retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'));
+		throw error;
 	}
 
 	return googleRouteMatrixResponseSchema.parse(await response.json());
+}
+
+function buildEstimatedRouteMatrixCells(input: RouteMatrixRequest) {
+	return input.origins.flatMap((origin) =>
+		input.destinations.map((destination) => {
+			const distanceMeters = haversineDistanceMeters(origin.location, destination.location);
+			return {
+				origin_id: origin.id,
+				destination_id: destination.id,
+				minutes: Number(estimateTravelMinutes(distanceMeters, input.travelMode).toFixed(1))
+			} satisfies RouteMatrixCell;
+		})
+	);
 }
 
 export function createGoogleRoutesProvider(logger?: SearchLogger): RouteMatrixProvider {
@@ -589,20 +687,67 @@ export function createGoogleRoutesProvider(logger?: SearchLogger): RouteMatrixPr
 					});
 
 					try {
-						const payload = await fetchRouteMatrixBatch(batchInput);
-						const cells = payload.map((cell) => {
+						let payload;
+
+						for (let attempt = 0; ; attempt += 1) {
+							try {
+								payload = await fetchRouteMatrixBatch(batchInput);
+								break;
+							} catch (error) {
+								if (
+									!isRateLimitError(error) ||
+									attempt >= RATE_LIMIT_RETRY_ATTEMPTS
+								) {
+									throw error;
+								}
+
+								const delayMs = Math.max(
+									error.retryAfterMs ??
+										RATE_LIMIT_RETRY_BASE_MS * (attempt + 1),
+									0
+								);
+
+								logGoogleStep(logger, 'google-routes', 'batch_rate_limited_retry', {
+									travelMode: input.travelMode,
+									batchNumber,
+									totalBatches,
+									attempt: attempt + 1,
+									delayMs,
+									message: error.message
+								});
+
+								await wait(delayMs);
+							}
+						}
+
+						let skippedElements = 0;
+						const cells = payload.flatMap((cell) => {
+							if (
+								cell.originIndex == null ||
+								cell.destinationIndex == null ||
+								!batchInput.origins[cell.originIndex] ||
+								!batchInput.destinations[cell.destinationIndex]
+							) {
+								skippedElements += 1;
+								return [];
+							}
+
 							const origin = batchInput.origins[cell.originIndex];
 							const destination = batchInput.destinations[cell.destinationIndex];
+							const hasStatusError =
+								cell.status != null &&
+								typeof cell.status.code === 'number' &&
+								cell.status.code !== 0;
 
-							return {
+							return [{
 								origin_id: origin.id,
 								destination_id: destination.id,
 								minutes:
-									cell.condition === 'ROUTE_EXISTS'
+									!hasStatusError && cell.condition === 'ROUTE_EXISTS'
 										? parseGoogleDurationToMinutes(cell.duration)
 										: null
-							};
-						});
+							}];
+							});
 
 						setCachedValue(routeCache, cacheKey, cells, ROUTE_CACHE_TTL_MS);
 						logGoogleStep(logger, 'google-routes', 'batch_request_complete', {
@@ -611,13 +756,37 @@ export function createGoogleRoutesProvider(logger?: SearchLogger): RouteMatrixPr
 							totalBatches,
 							cells: cells.length,
 							resolvedCells: cells.filter((cell) => cell.minutes != null).length,
+							skippedElements,
 							durationMs: Date.now() - batchStartedAt
-						});
-						allCells.push(...cells);
-					} catch (error) {
-						logGoogleStep(logger, 'google-routes', 'batch_request_failed', {
-							travelMode: input.travelMode,
-							batchNumber,
+							});
+							allCells.push(...cells);
+						} catch (error) {
+							if (isRateLimitError(error)) {
+								const fallbackCells = buildEstimatedRouteMatrixCells(batchInput);
+								setCachedValue(
+									routeCache,
+									cacheKey,
+									fallbackCells,
+									FALLBACK_ROUTE_CACHE_TTL_MS
+								);
+								logGoogleStep(logger, 'google-routes', 'batch_rate_limited_fallback', {
+									travelMode: input.travelMode,
+									batchNumber,
+									totalBatches,
+									origins: batchInput.origins.length,
+									destinations: batchInput.destinations.length,
+									elements: batchInput.origins.length * batchInput.destinations.length,
+									fallbackCells: fallbackCells.length,
+									durationMs: Date.now() - batchStartedAt,
+									message: error.message
+								});
+								allCells.push(...fallbackCells);
+								continue;
+							}
+
+							logGoogleStep(logger, 'google-routes', 'batch_request_failed', {
+								travelMode: input.travelMode,
+								batchNumber,
 							totalBatches,
 							origins: batchInput.origins.length,
 							destinations: batchInput.destinations.length,

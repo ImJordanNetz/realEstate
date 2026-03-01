@@ -170,6 +170,11 @@ type RouteSummary = {
 	comparisonsByOriginId: Record<string, ComparedPlace[]>;
 };
 
+type ListingOriginCluster = {
+	representative: ApartmentInventoryListing;
+	members: ApartmentInventoryListing[];
+};
+
 type AmenityLocationPreference = {
 	name: string;
 	query: string;
@@ -181,6 +186,8 @@ type AmenityLocationPreference = {
 const EARTH_RADIUS_METERS = 6_371_000;
 const DEFAULT_SHORTLIST_COUNT = 48;
 const MAX_PLACE_RESULTS_PER_REQUEST = 20;
+const ROUTE_ORIGIN_DEDUPE_METERS = 500;
+const MIN_ROUTE_ORIGINS_FOR_DEDUPE = 12;
 const LOCATION_AMENITY_PATTERNS = [
 	/\b(gym|fitness|yoga|pilates|climbing|grocery|supermarket|market|store|coffee|cafe|restaurant|bar|brewery|park|trail|beach|library|station|transit|mall|shopping|dog park|playground|pickleball|tennis|basketball)\b/
 ];
@@ -218,6 +225,32 @@ function estimateTravelMinutes(distanceMeters: number, travelMode: TravelMode) {
 		case 'transit':
 			return (distanceKilometers / 20) * 60 * 1.6 + 8;
 	}
+}
+
+function clusterListingsByDistance(
+	listings: ApartmentInventoryListing[],
+	thresholdMeters: number
+) {
+	const clusters: ListingOriginCluster[] = [];
+
+	listingLoop: for (const listing of listings) {
+		for (const cluster of clusters) {
+			if (
+				haversineDistanceMeters(listing.location, cluster.representative.location) <=
+				thresholdMeters
+			) {
+				cluster.members.push(listing);
+				continue listingLoop;
+			}
+		}
+
+		clusters.push({
+			representative: listing,
+			members: [listing]
+		});
+	}
+
+	return clusters;
 }
 
 function isLocationBasedAmenity(name: string) {
@@ -778,6 +811,7 @@ async function computeBestRouteSummary(params: {
 	departureTime?: string;
 	logger?: SearchLogger;
 	label?: string;
+	dedupeOriginsWithinMeters?: number | null;
 }): Promise<RouteSummary> {
 	const originIds = params.listings.map((listing) => listing.id);
 	const log = params.logger ?? (() => {});
@@ -801,11 +835,37 @@ async function computeBestRouteSummary(params: {
 		elements: params.listings.length * params.places.length
 	});
 
+	const dedupeThreshold =
+		params.dedupeOriginsWithinMeters != null &&
+		params.listings.length >= MIN_ROUTE_ORIGINS_FOR_DEDUPE
+			? params.dedupeOriginsWithinMeters
+			: null;
+	const originClusters =
+		dedupeThreshold != null ? clusterListingsByDistance(params.listings, dedupeThreshold) : [];
+	const shouldDedupeOrigins =
+		originClusters.length > 0 && originClusters.length < params.listings.length;
+	const routeOrigins = shouldDedupeOrigins
+		? originClusters.map((cluster) => ({
+				id: cluster.representative.id,
+				location: cluster.representative.location
+			}))
+		: toRouteOrigins(params.listings);
+
+	if (shouldDedupeOrigins) {
+		log('search', 'route_summary_origin_deduped', {
+			label: params.label ?? 'unknown',
+			travelMode: params.travelMode,
+			origins: params.listings.length,
+			dedupedOrigins: routeOrigins.length,
+			dedupeWithinMeters: dedupeThreshold
+		});
+	}
+
 	let cells: RouteMatrixCell[];
 
 	try {
 		cells = await params.routes.computeRouteMatrix({
-			origins: toRouteOrigins(params.listings),
+			origins: routeOrigins,
 			destinations: params.places.map((place) => ({
 				id: place.id,
 				location: place.location
@@ -823,6 +883,61 @@ async function computeBestRouteSummary(params: {
 			message: error instanceof Error ? error.message : 'Failed to compute route summary.'
 		});
 		throw error;
+	}
+
+	if (shouldDedupeOrigins) {
+		const representativeMinutesByOriginId = new Map<string, Map<string, number | null>>();
+
+		for (const cell of cells) {
+			let destinationMinutes = representativeMinutesByOriginId.get(cell.origin_id);
+
+			if (!destinationMinutes) {
+				destinationMinutes = new Map<string, number | null>();
+				representativeMinutesByOriginId.set(cell.origin_id, destinationMinutes);
+			}
+
+			destinationMinutes.set(cell.destination_id, cell.minutes);
+		}
+
+		cells = originClusters.flatMap((cluster) => {
+			const representativeDestinationMinutes =
+				representativeMinutesByOriginId.get(cluster.representative.id) ?? new Map();
+
+			return cluster.members.flatMap((listing) =>
+				params.places.map((place) => {
+					const representativeMinutes =
+						representativeDestinationMinutes.get(place.id) ?? null;
+
+					if (listing.id === cluster.representative.id || representativeMinutes == null) {
+						return {
+							origin_id: listing.id,
+							destination_id: place.id,
+							minutes: representativeMinutes
+						} satisfies RouteMatrixCell;
+					}
+
+					const representativeEstimate = estimateTravelMinutes(
+						haversineDistanceMeters(cluster.representative.location, place.location),
+						params.travelMode
+					);
+					const listingEstimate = estimateTravelMinutes(
+						haversineDistanceMeters(listing.location, place.location),
+						params.travelMode
+					);
+
+					return {
+						origin_id: listing.id,
+						destination_id: place.id,
+						minutes: Number(
+							Math.max(
+								0,
+								representativeMinutes + (listingEstimate - representativeEstimate)
+							).toFixed(1)
+						)
+					} satisfies RouteMatrixCell;
+				})
+			);
+		});
 	}
 
 	log('search', 'route_summary_complete', {
@@ -995,7 +1110,8 @@ export async function searchApartments(params: {
 			routes: providers.routes,
 			departureTime: options.departureTime,
 			logger: log,
-			label: 'commute'
+			label: 'commute',
+			dedupeOriginsWithinMeters: null
 		});
 
 		commutePlaceByListingId = routeSummary.bestPlaceByOriginId;
@@ -1028,7 +1144,11 @@ export async function searchApartments(params: {
 			routes: providers.routes,
 			departureTime: options.departureTime,
 			logger: log,
-			label: constraint.label
+			label: constraint.label,
+			dedupeOriginsWithinMeters:
+				constraint.travel_mode === 'walk' || constraint.travel_mode === 'bike'
+					? ROUTE_ORIGIN_DEDUPE_METERS
+					: null
 		});
 
 		for (const listingId of originIds) {
@@ -1067,7 +1187,11 @@ export async function searchApartments(params: {
 			routes: providers.routes,
 			departureTime: options.departureTime,
 			logger: log,
-			label: `Amenity: ${amenityLocation.name}`
+			label: `Amenity: ${amenityLocation.name}`,
+			dedupeOriginsWithinMeters:
+				amenityLocation.travelMode === 'walk' || amenityLocation.travelMode === 'bike'
+					? ROUTE_ORIGIN_DEDUPE_METERS
+					: null
 		});
 
 		for (const listingId of originIds) {

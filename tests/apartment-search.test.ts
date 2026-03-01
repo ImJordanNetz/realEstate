@@ -529,6 +529,83 @@ test('searchApartments only routes a shortlist of top candidates', async () => {
 	assert.ok(routes.calls.every((call) => call.originIds.length <= 2));
 });
 
+test('searchApartments dedupes dense walk-route origins before final routing', async () => {
+	const preferences = {
+		budget: {
+			max_rent: null,
+			ideal_rent: null
+		},
+		nightlife: null,
+		commute: null,
+		constraints: [
+			{
+				label: 'Walk to a park',
+				search_query: 'park',
+				search_type: 'category',
+				travel_mode: 'walk',
+				max_minutes: 12,
+				is_dealbreaker: false,
+				importance: 0.9
+			}
+		],
+		unit_requirements: null,
+		raw_input: 'I want to walk to a park'
+	} satisfies ApartmentPreferences;
+	const listings = [
+		...Array.from({ length: 7 }, (_, index) =>
+			createListing(`alpha-${index}`, {
+				rent: 2_000 + index,
+				location: {
+					lat: 33.6802 + index * 0.00045,
+					lng: -117.8202 + index * 0.00015
+				}
+			})
+		),
+		...Array.from({ length: 7 }, (_, index) =>
+			createListing(`beta-${index}`, {
+				rent: 2_100 + index,
+				location: {
+					lat: 33.708 + index * 0.00045,
+					lng: -117.792 + index * 0.00015
+				}
+			})
+		)
+	];
+	const places = new StubPlacesProvider({
+		'category:park': [
+			{
+				id: 'park-1',
+				name: 'Park One',
+				location: { lat: 33.681, lng: -117.8201 },
+				address: 'Irvine, CA',
+				types: ['park']
+			}
+		]
+	});
+	const routes = new StubRoutesProvider({
+		walk: {
+			'alpha-0': { 'park-1': 4 },
+			'beta-0': { 'park-1': 12 }
+		}
+	});
+
+	const result = await searchApartments({
+		preferences,
+		listings,
+		providers: { places, routes },
+		options: {
+			shortlistCount: listings.length
+		}
+	});
+	const parkKey = buildApartmentConstraintKey(preferences.constraints[0]);
+
+	assert.equal(routes.calls.length, 1);
+	assert.deepEqual(new Set(routes.calls[0]?.originIds), new Set(['alpha-0', 'beta-0']));
+	assert.ok(
+		result.ranked.every((hit) => hit.derived_metrics.proximity_minutes[parkKey] != null)
+	);
+});
+
 test('searchApartments refines saturated category searches against the shortlist region', async () => {
 	const preferences = {
 		budget: {
