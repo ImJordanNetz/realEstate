@@ -14,12 +14,16 @@ const GOOGLE_PLACES_TEXT_SEARCH_URL = 'https://places.googleapis.com/v1/places:s
 const GOOGLE_PLACE_DETAILS_URL = 'https://places.googleapis.com/v1/places';
 const GOOGLE_ROUTE_MATRIX_URL =
 	'https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix';
+const GOOGLE_ROUTES_COMPUTE_URL =
+	'https://routes.googleapis.com/directions/v2:computeRoutes';
 const PLACE_CACHE_TTL_MS = 1000 * 60 * 60 * 12;
 const PHOTO_CACHE_TTL_MS = 1000 * 60 * 60 * 12;
 const ROUTE_CACHE_TTL_MS = 1000 * 60 * 30;
+const DIRECTIONS_CACHE_TTL_MS = 1000 * 60 * 30;
 const placeCache = new Map<string, { expiresAt: number; value: PlaceCandidate[] }>();
 const photoCache = new Map<string, { expiresAt: number; value: GooglePlacePhoto }>();
 const routeCache = new Map<string, { expiresAt: number; value: RouteMatrixCell[] }>();
+const directionsCache = new Map<string, { expiresAt: number; value: string }>();
 
 const googlePlaceSearchResponseSchema = z.object({
 	places: z
@@ -658,4 +662,101 @@ export function createGoogleMapsProviders(logger?: SearchLogger) {
 		places: createGooglePlacesProvider(logger),
 		routes: createGoogleRoutesProvider(logger)
 	};
+}
+
+// --- Google Directions (computeRoutes) for polylines ---
+
+const googleComputeRoutesResponseSchema = z.object({
+	routes: z
+		.array(
+			z.object({
+				polyline: z.object({
+					encodedPolyline: z.string()
+				})
+			})
+		)
+		.optional()
+});
+
+export type DirectionsRequest = {
+	origin: { lat: number; lng: number };
+	destination: { lat: number; lng: number };
+	travelMode: RouteMatrixRequest['travelMode'];
+};
+
+function buildDirectionsCacheKey(input: DirectionsRequest) {
+	return JSON.stringify({
+		oLat: roundedCoordinate(input.origin.lat),
+		oLng: roundedCoordinate(input.origin.lng),
+		dLat: roundedCoordinate(input.destination.lat),
+		dLng: roundedCoordinate(input.destination.lng),
+		mode: input.travelMode
+	});
+}
+
+export async function fetchDirectionsPolyline(
+	input: DirectionsRequest
+): Promise<string | null> {
+	const cacheKey = buildDirectionsCacheKey(input);
+	const cached = getCachedValue(directionsCache, cacheKey);
+
+	if (cached != null) {
+		return cached;
+	}
+
+	const apiKey = getGoogleApiKey();
+	const response = await fetch(GOOGLE_ROUTES_COMPUTE_URL, {
+		method: 'POST',
+		headers: {
+			'content-type': 'application/json',
+			'X-Goog-Api-Key': apiKey,
+			'X-Goog-FieldMask': 'routes.polyline.encodedPolyline'
+		},
+		body: JSON.stringify({
+			origin: {
+				location: {
+					latLng: {
+						latitude: input.origin.lat,
+						longitude: input.origin.lng
+					}
+				}
+			},
+			destination: {
+				location: {
+					latLng: {
+						latitude: input.destination.lat,
+						longitude: input.destination.lng
+					}
+				}
+			},
+			travelMode: toGoogleTravelMode(input.travelMode),
+			...(input.travelMode === 'drive'
+				? { routingPreference: 'TRAFFIC_UNAWARE' }
+				: {})
+		})
+	});
+
+	if (!response.ok) {
+		throw new Error(
+			`Google Directions failed: ${await readGoogleError(response)}`
+		);
+	}
+
+	const parsed = googleComputeRoutesResponseSchema.parse(
+		await response.json()
+	);
+
+	const encodedPolyline =
+		parsed.routes?.[0]?.polyline?.encodedPolyline ?? null;
+
+	if (encodedPolyline) {
+		setCachedValue(
+			directionsCache,
+			cacheKey,
+			encodedPolyline,
+			DIRECTIONS_CACHE_TTL_MS
+		);
+	}
+
+	return encodedPolyline;
 }

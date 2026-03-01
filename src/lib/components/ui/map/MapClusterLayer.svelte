@@ -15,6 +15,8 @@
 		clusterThresholds?: [number, number];
 		/** Color for unclustered individual points (default: "#3b82f6") */
 		pointColor?: string;
+		/** Currently selected unclustered point id */
+		selectedPointId?: string | null;
 		/** Callback when an unclustered point is clicked */
 		onpointclick?: (
 			feature: GeoJSON.Feature<GeoJSON.Point, P>,
@@ -31,6 +33,7 @@
 		clusterColors = ["#22c55e", "#eab308", "#ef4444"],
 		clusterThresholds = [100, 750],
 		pointColor = "#3b82f6",
+		selectedPointId = null,
 		onpointclick,
 		onclusterclick,
 	}: Props = $props();
@@ -45,11 +48,13 @@
 	const clusterLayerId = $derived(`clusters-${id}`);
 	const clusterCountLayerId = $derived(`cluster-count-${id}`);
 	const unclusteredLayerId = $derived(`unclustered-point-${id}`);
+	const selectedPointLayerId = $derived(`selected-point-${id}`);
 
 	const styleProps = $derived({
 		clusterColors,
 		clusterThresholds,
 		pointColor,
+		selectedPointId,
 	});
 
 	// Add source and layers when map is ready
@@ -62,6 +67,7 @@
 		// Remove existing layers and source if they exist
 		try {
 			if (map.getLayer(clusterCountLayerId)) map.removeLayer(clusterCountLayerId);
+			if (map.getLayer(selectedPointLayerId)) map.removeLayer(selectedPointLayerId);
 			if (map.getLayer(unclusteredLayerId)) map.removeLayer(unclusteredLayerId);
 			if (map.getLayer(clusterLayerId)) map.removeLayer(clusterLayerId);
 			if (map.getSource(sourceId)) map.removeSource(sourceId);
@@ -70,12 +76,21 @@
 		}
 
 		// Add clustered GeoJSON source
+		// Use clusterProperties to track whether the selected point is inside a cluster
+		const clusterProps: Record<string, MapLibreGL.ExpressionSpecification> = {};
+		if (selectedPointId) {
+			clusterProps["has_selected"] = [
+				"any",
+				["==", ["get", "id"], selectedPointId],
+			] as unknown as MapLibreGL.ExpressionSpecification;
+		}
 		map.addSource(sourceId, {
 			type: "geojson",
 			data,
 			cluster: true,
 			clusterMaxZoom,
 			clusterRadius,
+			clusterProperties: clusterProps,
 		});
 
 		// Add cluster circles layer
@@ -105,7 +120,14 @@
 				],
 				"circle-stroke-width": 1,
 				"circle-stroke-color": "#fff",
-				"circle-opacity": 0.85,
+				"circle-opacity": selectedPointId
+					? [
+							"case",
+							["==", ["get", "has_selected"], true],
+							0.85,
+							0.25,
+						]
+					: 0.85,
 			},
 		});
 
@@ -132,16 +154,62 @@
 			source: sourceId,
 			filter: ["!", ["has", "point_count"]],
 			paint: {
-				"circle-color": pointColor,
-				"circle-radius": 5,
+				"circle-color": selectedPointId
+					? [
+							"case",
+							["==", ["get", "id"], selectedPointId],
+							pointColor,
+							pointColor,
+						]
+					: pointColor,
+				"circle-radius": selectedPointId
+					? [
+							"case",
+							["==", ["get", "id"], selectedPointId],
+							7,
+							5,
+						]
+					: 5,
+				"circle-opacity": selectedPointId
+					? [
+							"case",
+							["==", ["get", "id"], selectedPointId],
+							1,
+							0.22,
+						]
+					: 1,
 				"circle-stroke-width": 2,
-				"circle-stroke-color": "#fff",
+				"circle-stroke-color": selectedPointId
+					? [
+							"case",
+							["==", ["get", "id"], selectedPointId],
+							"#ffffff",
+							"#ffffff",
+						]
+					: "#fff",
+			},
+		});
+
+		map.addLayer({
+			id: selectedPointLayerId,
+			type: "circle",
+			source: sourceId,
+			filter: selectedPointId
+				? ["all", ["!", ["has", "point_count"]], ["==", ["get", "id"], selectedPointId]]
+				: ["==", ["get", "id"], "__never__"],
+			paint: {
+				"circle-color": pointColor,
+				"circle-radius": 9,
+				"circle-opacity": 1,
+				"circle-stroke-width": 3,
+				"circle-stroke-color": "#ffffff",
 			},
 		});
 
 		return () => {
 			try {
 				if (map.getLayer(clusterCountLayerId)) map.removeLayer(clusterCountLayerId);
+				if (map.getLayer(selectedPointLayerId)) map.removeLayer(selectedPointLayerId);
 				if (map.getLayer(unclusteredLayerId)) map.removeLayer(unclusteredLayerId);
 				if (map.getLayer(clusterLayerId)) map.removeLayer(clusterLayerId);
 				if (map.getSource(sourceId)) map.removeSource(sourceId);
@@ -174,6 +242,7 @@
 		const prev = styleProps;
 		const colorsChanged =
 			prev.clusterColors !== clusterColors || prev.clusterThresholds !== clusterThresholds;
+		const selectedChanged = prev.selectedPointId !== selectedPointId;
 
 		// Update cluster layer colors and sizes
 		if (map.getLayer(clusterLayerId) && colorsChanged) {
@@ -196,10 +265,73 @@
 				40,
 			]);
 		}
+		if (map.getLayer(clusterLayerId) && selectedChanged) {
+			map.setPaintProperty(
+				clusterLayerId,
+				"circle-opacity",
+				selectedPointId
+					? [
+							"case",
+							["==", ["get", "has_selected"], true],
+							0.85,
+							0.25,
+						]
+					: 0.85,
+			);
+		}
 
 		// Update unclustered point layer color
 		if (map.getLayer(unclusteredLayerId) && prev.pointColor !== pointColor) {
 			map.setPaintProperty(unclusteredLayerId, "circle-color", pointColor);
+		}
+		if (map.getLayer(unclusteredLayerId) && (selectedChanged || prev.pointColor !== pointColor)) {
+			map.setPaintProperty(
+				unclusteredLayerId,
+				"circle-color",
+				selectedPointId
+					? [
+							"case",
+							["==", ["get", "id"], selectedPointId],
+							pointColor,
+							pointColor,
+						]
+					: pointColor,
+			);
+			map.setPaintProperty(
+				unclusteredLayerId,
+				"circle-radius",
+				selectedPointId
+					? [
+							"case",
+							["==", ["get", "id"], selectedPointId],
+							7,
+							5,
+						]
+					: 5,
+			);
+			map.setPaintProperty(
+				unclusteredLayerId,
+				"circle-opacity",
+				selectedPointId
+					? [
+							"case",
+							["==", ["get", "id"], selectedPointId],
+							1,
+							0.22,
+						]
+					: 1,
+			);
+		}
+		if (map.getLayer(selectedPointLayerId)) {
+			map.setFilter(
+				selectedPointLayerId,
+				selectedPointId
+					? ["all", ["!", ["has", "point_count"]], ["==", ["get", "id"], selectedPointId]]
+					: ["==", ["get", "id"], "__never__"],
+			);
+			if (prev.pointColor !== pointColor) {
+				map.setPaintProperty(selectedPointLayerId, "circle-color", pointColor);
+			}
 		}
 	});
 

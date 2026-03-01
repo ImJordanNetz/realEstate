@@ -16,6 +16,17 @@
 	import Map from "$lib/components/ui/map/Map.svelte";
 	import MapClusterLayer from "$lib/components/ui/map/MapClusterLayer.svelte";
 	import MapHeatmapLayer from "$lib/components/ui/map/MapHeatmapLayer.svelte";
+	import MapRouteLayer, {
+		type RouteLine,
+		type RouteMarker,
+	} from "$lib/components/ui/map/MapRouteLayer.svelte";
+	import MapPOILayer, {
+		type POIPoint,
+	} from "$lib/components/ui/map/MapPOILayer.svelte";
+	import {
+		requestDirections,
+		type RouteDestination,
+	} from "$lib/listings/directions";
 	import ListingCard, {
 		type ListingCardListing,
 		type ListingHighlight,
@@ -551,19 +562,8 @@
 
 	function handleListingClick(listing: ListingCardListing) {
 		selectedListingId = listing.id;
-		if (!mapInstance) return;
-
-		// The left panel covers 1/3 of the viewport, so we need to offset the
-		// center so the listing point lands in the middle of the visible 2/3.
-		// We fly to the raw coordinates first, then use the pixel projection to
-		// shift the center leftward by half the panel width.
-		const panelPixels = questionsSubmitted ? Math.round(innerWidth / 3) : 0;
-		mapInstance.flyTo({
-			center: [listing.lng, listing.lat],
-			zoom: 15,
-			duration: 800,
-			padding: { top: 0, bottom: 0, left: panelPixels, right: 0 },
-		});
+		// The map will be fitted to include the listing + its destinations
+		// inside the $effect that builds routeDestinations.
 	}
 
 	function handleMapPointClick(
@@ -578,6 +578,245 @@
 		const el = document.getElementById(`listing-${id}`);
 		el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
 	}
+
+	// --- Route polylines on selected listing ---
+	let routeLines = $state<RouteLine[]>([]);
+	let routeDestinations = $state<RouteMarker[]>([]);
+
+	// --- Nearby POIs on selected listing ---
+	let nearbyPOIs = $state<POIPoint[]>([]);
+
+	function buildConstraintKey(constraint: {
+		label: string;
+		search_query: string;
+		travel_mode: string;
+	}) {
+		return `${constraint.label}-${constraint.search_query}-${constraint.travel_mode}`
+			.trim()
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, "-")
+			.replace(/^-+|-+$/g, "");
+	}
+
+	/** Fit the map to show the listing origin and all its route destinations. */
+	function fitMapToListingAndDestinations(
+		origin: { lat: number; lng: number },
+		markers: RouteMarker[],
+	) {
+		if (!mapInstance) return;
+
+		const points: [number, number][] = [
+			[origin.lng, origin.lat],
+			...markers.map((m) => [m.lng, m.lat] as [number, number]),
+		];
+
+		// Compute bounding box
+		let minLng = Infinity,
+			minLat = Infinity,
+			maxLng = -Infinity,
+			maxLat = -Infinity;
+		for (const [lng, lat] of points) {
+			if (lng < minLng) minLng = lng;
+			if (lng > maxLng) maxLng = lng;
+			if (lat < minLat) minLat = lat;
+			if (lat > maxLat) maxLat = lat;
+		}
+
+		const panelPixels = questionsSubmitted ? Math.round(innerWidth / 3) : 0;
+
+		mapInstance.fitBounds(
+			[
+				[minLng, minLat],
+				[maxLng, maxLat],
+			],
+			{
+				padding: {
+					top: 60,
+					bottom: 60,
+					left: panelPixels + 60,
+					right: 60,
+				},
+				maxZoom: 15,
+				duration: 800,
+			},
+		);
+	}
+
+	$effect(() => {
+		const listingId = selectedListingId;
+		const profile = completedProfile;
+		const result = searchResult;
+
+		// Clear routes if no selection or no search results
+		if (!listingId || !result || !profile) {
+			routeLines = [];
+			routeDestinations = [];
+			return;
+		}
+
+		const hit = result.ranked.find((h) => h.listing.id === listingId);
+		if (!hit) {
+			routeLines = [];
+			routeDestinations = [];
+			return;
+		}
+
+		const origin = {
+			lat: hit.listing.location.lat,
+			lng: hit.listing.location.lng,
+		};
+
+		// Build destinations from matched_places
+		const dests: RouteDestination[] = [];
+		const markers: RouteMarker[] = [];
+
+		// Commute destination
+		if (hit.matched_places.commute && profile.commute) {
+			const place = hit.matched_places.commute;
+			dests.push({
+				id: "commute",
+				label: place.name,
+				lat: place.location.lat,
+				lng: place.location.lng,
+				travelMode: profile.commute.travel_mode,
+				minutes: hit.derived_metrics.commute_minutes,
+			});
+			markers.push({
+				id: "commute",
+				name: place.name,
+				lat: place.location.lat,
+				lng: place.location.lng,
+				minutes: hit.derived_metrics.commute_minutes,
+				placeId: place.id,
+				address: place.address,
+			});
+		}
+
+		// Constraint destinations
+		const constraints = Array.isArray(profile.constraints)
+			? profile.constraints
+			: [];
+		for (const constraint of constraints) {
+			const key = buildConstraintKey(constraint);
+			const place = hit.matched_places.constraints[key];
+			if (!place) continue;
+
+			dests.push({
+				id: key,
+				label: place.name,
+				lat: place.location.lat,
+				lng: place.location.lng,
+				travelMode: constraint.travel_mode,
+				minutes: hit.derived_metrics.proximity_minutes[key] ?? null,
+			});
+			markers.push({
+				id: key,
+				name: place.name,
+				lat: place.location.lat,
+				lng: place.location.lng,
+				minutes: hit.derived_metrics.proximity_minutes[key] ?? null,
+				placeId: place.id,
+				address: place.address,
+			});
+		}
+
+		if (dests.length === 0) {
+			routeLines = [];
+			routeDestinations = [];
+			// Still fly to the listing even if there are no destinations
+			if (mapInstance) {
+				const panelPixels = questionsSubmitted
+					? Math.round(innerWidth / 3)
+					: 0;
+				mapInstance.flyTo({
+					center: [origin.lng, origin.lat],
+					zoom: 15,
+					duration: 800,
+					padding: { top: 0, bottom: 0, left: panelPixels, right: 0 },
+				});
+			}
+			return;
+		}
+
+		// Set markers immediately (before polylines arrive)
+		routeDestinations = markers;
+
+		// Fit the map to show the listing + all its destinations
+		fitMapToListingAndDestinations(origin, markers);
+
+		const controller = new AbortController();
+
+		void requestDirections({
+			listingId,
+			origin,
+			destinations: dests,
+			signal: controller.signal,
+		})
+			.then((result) => {
+				if (controller.signal.aborted) return;
+				routeLines = result.routes;
+			})
+			.catch(() => {
+				if (controller.signal.aborted) return;
+				// Silently fail — markers still show
+				routeLines = [];
+			});
+
+		return () => controller.abort();
+	});
+
+	// --- Fetch nearby POIs when a listing is selected ---
+	let lastPOIListingId = "";
+	$effect(() => {
+		const listingId = selectedListingId;
+
+		if (!listingId) {
+			nearbyPOIs = [];
+			lastPOIListingId = "";
+			return;
+		}
+
+		// Find the listing coordinates
+		const listing = listings.find((l) => l.id === listingId);
+		if (!listing) {
+			nearbyPOIs = [];
+			return;
+		}
+
+		// Don't refetch if same listing
+		if (listingId === lastPOIListingId) return;
+		lastPOIListingId = listingId;
+
+		const controller = new AbortController();
+
+		void fetch("/api/listings/nearby", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ lat: listing.lat, lng: listing.lng }),
+			signal: controller.signal,
+		})
+			.then((res) => res.json())
+			.then((data) => {
+				if (controller.signal.aborted) return;
+				const points: POIPoint[] = [];
+				const pois = data.pois as Record<
+					string,
+					Array<{ id: string; name: string; lat: number; lng: number; address: string | null }>
+				>;
+				for (const [category, places] of Object.entries(pois)) {
+					for (const place of places) {
+						points.push({ ...place, category });
+					}
+				}
+				nearbyPOIs = points;
+			})
+			.catch(() => {
+				if (controller.signal.aborted) return;
+				nearbyPOIs = [];
+			});
+
+		return () => controller.abort();
+	});
 </script>
 
 <svelte:window bind:innerWidth />
@@ -614,7 +853,13 @@
 				clusterThresholds={[10, 50]}
 				clusterColors={["#6d28d9", "#7c3aed", "#8b5cf6"]}
 				pointColor="#6d28d9"
+				selectedPointId={selectedListingId}
 				onpointclick={handleMapPointClick}
+			/>
+			<MapPOILayer pois={nearbyPOIs} />
+			<MapRouteLayer
+				routes={routeLines}
+				destinations={routeDestinations}
 			/>
 		</Map>
 	</div>

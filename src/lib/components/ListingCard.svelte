@@ -38,6 +38,12 @@
 	let photo = $state<ListingPhoto | null>(null);
 	let isPhotoLoading = $state(false);
 	let photoLoadFailed = $state(false);
+	let expanded = $state(false);
+
+	function toggleExpand(e: MouseEvent) {
+		e.stopPropagation();
+		expanded = !expanded;
+	}
 
 	function formatPrice(price: number | null) {
 		if (price == null) return "—";
@@ -79,6 +85,13 @@
 
 	const streetViewUrl = $derived(buildStreetViewUrl(listing.lat, listing.lng));
 
+	function buildZillowUrl(address: string) {
+		const slug = address.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+		return `https://www.zillow.com/homes/${encodeURIComponent(slug)}_rb/`;
+	}
+
+	const zillowUrl = $derived(buildZillowUrl(listing.address));
+
 	$effect(() => {
 		photo = null;
 		photoLoadFailed = false;
@@ -113,11 +126,13 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <article
-	class="group flex shrink-0 flex-row rounded-2xl border bg-white shadow-sm transition hover:shadow-md overflow-hidden mr-4 {selected ? 'border-primary ring-2 ring-primary/20' : 'border-gray-100'} {onclick ? 'cursor-pointer' : ''}"
+	class="group relative mr-4 flex shrink-0 overflow-hidden rounded-2xl border bg-white shadow-sm transition-all duration-300 hover:shadow-md {selected ? 'border-primary ring-2 ring-primary/20' : 'border-gray-100'} {expanded ? 'flex-col' : 'flex-row'}"
+	style={expanded ? 'height: 70vh;' : ''}
 	onclick={onclick}
 >
 	<div
-		class="relative w-28 shrink-0 self-stretch bg-gradient-to-br from-gray-100 to-gray-200"
+		class="relative shrink-0 bg-gradient-to-br from-gray-100 to-gray-200 transition-all duration-300 {expanded ? 'w-full' : 'w-28 self-stretch'}"
+		style={expanded ? 'height: 45%;' : ''}
 	>
 		{#if photo?.photoUrl}
 			<img
@@ -155,19 +170,19 @@
 		{/if}
 	</div>
 
-	<div class="flex min-w-0 flex-1 flex-col gap-1.5 p-4">
+	<div class="flex min-w-0 shrink-0 flex-col p-4 transition-all duration-300 {expanded ? 'gap-3 p-5' : 'flex-1 gap-1.5'}">
 		<div class="flex items-baseline justify-between">
-			<p class="text-lg font-semibold tracking-tight text-gray-900">
+			<p class="font-semibold tracking-tight text-gray-900 transition-all duration-300 {expanded ? 'text-2xl' : 'text-lg'}">
 				{formatPrice(listing.price)}<span
-					class="text-xs font-normal text-gray-400">/mo</span
+					class="font-normal text-gray-400 {expanded ? 'text-sm' : 'text-xs'}">/mo</span
 				>
 			</p>
 			{#if listing.matchScore != null}
-				<span class="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">
+				<span class="rounded-full bg-primary/10 px-2 py-0.5 font-semibold text-primary {expanded ? 'text-sm' : 'text-[11px]'}">
 					{formatMatchScore(listing.matchScore)}
 				</span>
 			{:else if listing.sqft}
-				<p class="text-xs text-gray-400">
+				<p class="text-gray-400 {expanded ? 'text-sm' : 'text-xs'}">
 					{formatPrice(
 						listing.price && listing.sqft
 							? Math.round((listing.price / listing.sqft) * 100) /
@@ -179,7 +194,7 @@
 		</div>
 
 		<div
-			class="flex flex-wrap items-center gap-x-2 text-[13px] text-gray-500"
+			class="flex flex-wrap items-center gap-x-2 text-gray-500 {expanded ? 'text-base' : 'text-[13px]'}"
 		>
 			<span>{formatBedBath(listing.bedrooms, listing.bathrooms)}</span>
 			{#if listing.sqft}
@@ -189,7 +204,7 @@
 		</div>
 
 		<a
-			class="group/sv flex items-center gap-1 truncate text-xs text-gray-400 transition hover:text-gray-600"
+			class="group/sv flex items-center gap-1 truncate text-gray-400 transition hover:text-gray-600 {expanded ? 'text-sm' : 'text-xs'}"
 			href={streetViewUrl}
 			target="_blank"
 			rel="noreferrer"
@@ -202,7 +217,7 @@
 		</a>
 
 		{#if listing.requiredSummary}
-			<p class="text-xs font-medium text-amber-700">
+			<p class="font-medium text-amber-700 {expanded ? 'text-sm' : 'text-xs'}">
 				{listing.requiredSummary}
 			</p>
 		{/if}
@@ -211,16 +226,42 @@
 			<div class="flex flex-wrap gap-1.5 pt-0.5">
 				{#each listing.highlights as highlight (highlight.text)}
 					{#if highlight.status === 'fail'}
-						<span class="inline-flex items-center rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-medium text-rose-400">
+						<span class="inline-flex items-center rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 font-medium text-rose-400 {expanded ? 'text-xs' : 'text-[10px]'}">
 							{highlight.text}
 						</span>
 					{:else}
-						<span class="inline-flex items-center rounded-md border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] font-medium text-gray-500">
+						<span class="inline-flex items-center rounded-md border border-gray-200 bg-gray-50 px-2 py-0.5 font-medium text-gray-500 {expanded ? 'text-xs' : 'text-[10px]'}">
 							{highlight.text}
 						</span>
 					{/if}
 				{/each}
 			</div>
 		{/if}
+
+		{#if expanded}
+			<a
+				class="mt-1 inline-flex w-fit items-center gap-1.5 rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-600 transition hover:bg-blue-100"
+				href={zillowUrl}
+				target="_blank"
+				rel="noreferrer"
+				onclick={(e) => e.stopPropagation()}
+			>
+				View on Zillow
+				<svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+				</svg>
+			</a>
+		{/if}
 	</div>
+
+	<!-- Expand/collapse button -->
+	<button
+		class="absolute bottom-2 right-2 flex h-7 w-7 items-center justify-center rounded-full bg-white/90 text-gray-400 shadow-md backdrop-blur-sm transition hover:bg-white hover:text-gray-700"
+		onclick={toggleExpand}
+		aria-label={expanded ? 'Collapse listing' : 'Expand listing'}
+	>
+		<svg class="h-4 w-4 transition-transform duration-300 {expanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+			<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+		</svg>
+	</button>
 </article>

@@ -66,7 +66,11 @@
     </p>
 
     <!-- ChatGPT-style composer input -->
-    <form class="relative mt-10 w-full max-w-lg" action="/listings" method="GET">
+    <form
+        class="relative mt-10 w-full max-w-lg"
+        action="/listings"
+        method="GET"
+    >
         <div
             class="relative rounded-[28px] border border-primary/20 bg-background/80 shadow-lg shadow-primary/10 backdrop-blur-sm transition-all focus-within:border-primary/50 focus-within:shadow-primary/20"
         >
