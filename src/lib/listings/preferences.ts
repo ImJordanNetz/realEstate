@@ -3,6 +3,7 @@ import type {
 	ApartmentPreferenceExtractionResponse,
 	ApartmentPreferences
 } from '$lib/server/apartment-preferences';
+import { isAllowedClarificationFieldPath } from '$lib/shared/apartment-preference-paths';
 
 export type ExtractionError = {
 	message: string;
@@ -152,6 +153,10 @@ export function toClarificationAnswers(
 }
 
 function setValueAtPath(target: Record<string, unknown>, path: string, value: ClarificationAnswerValue) {
+	if (!isAllowedClarificationFieldPath(path)) {
+		return;
+	}
+
 	const segments = path
 		.replace(/\[(\d+)\]/g, '.$1')
 		.split('.')

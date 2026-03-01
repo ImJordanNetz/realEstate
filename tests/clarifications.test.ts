@@ -115,3 +115,25 @@ test('applyClarificationAnswersToProfile updates top-level nightlife preferences
 	assert.equal(updated.nightlife?.preference, 'lively');
 	assert.equal(updated.nightlife?.importance, 0.6);
 });
+
+test('applyClarificationAnswersToProfile ignores unsafe clarification paths', () => {
+	const profile = createProfile();
+	const questions = [
+		{
+			id: 'unsafe',
+			field_path: '__proto__.polluted',
+			question: 'Unsafe?',
+			response_type: 'boolean',
+			options: null,
+			unit: null,
+			why_asked: 'Should be ignored'
+		}
+	] satisfies ClarificationQuestion[];
+
+	const updated = applyClarificationAnswersToProfile(profile, questions, {
+		unsafe: true
+	});
+
+	assert.equal(({} as { polluted?: unknown }).polluted, undefined);
+	assert.equal((updated as { polluted?: unknown }).polluted, undefined);
+});

@@ -579,7 +579,7 @@ export async function searchApartments(params: {
 	const log = params.logger ?? (() => {});
 	const startedAt = Date.now();
 	const searchRegion = buildSearchRegion(listings, options.regionPaddingMeters);
-	const placeResultLimit = options.maxPlaceResults ?? 8;
+	const placeResultLimit = options.maxPlaceResults ?? 20;
 	const commuteResultLimit = options.commutePlaceResults ?? 1;
 	const constraintPlacesByKey = new Map<string, PlaceCandidate[]>();
 	const amenityLocationPreferences = deriveAmenityLocationPreferences(preferences);

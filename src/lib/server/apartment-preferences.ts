@@ -1,9 +1,228 @@
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { env } from '$env/dynamic/private';
-import { generateText, Output } from 'ai';
+import { generateText, JSONParseError, NoObjectGeneratedError, Output, TypeValidationError } from 'ai';
+import { isAllowedClarificationFieldPath } from '$lib/shared/apartment-preference-paths';
+import { getPrivateEnv } from '$lib/server/runtime-env';
 import { z } from 'zod';
 
 const DEFAULT_OPENROUTER_MODEL = 'openai/gpt-5.2';
+
+type TravelMode = 'walk' | 'bike' | 'drive' | 'transit';
+type SearchType = 'category' | 'specific';
+type NightlifePreference = 'quiet' | 'lively';
+type ParkingPreference = 'garage' | 'covered' | 'any';
+type LaundryPreference = 'in_unit' | 'on_site' | 'any';
+
+function normalizeToken(value: string) {
+	return value.trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
+function toNonEmptyString(value: unknown): string | null {
+	if (typeof value !== 'string') {
+		return null;
+	}
+
+	const trimmed = value.trim();
+	return trimmed ? trimmed : null;
+}
+
+function toCanonicalBoolean(value: unknown): boolean | null {
+	if (typeof value === 'boolean') {
+		return value;
+	}
+
+	if (typeof value === 'number' && (value === 0 || value === 1)) {
+		return Boolean(value);
+	}
+
+	if (typeof value === 'string') {
+		const normalized = normalizeToken(value);
+		if (normalized === 'true' || normalized === 'yes' || normalized === 'y' || normalized === '1') {
+			return true;
+		}
+		if (
+			normalized === 'false' ||
+			normalized === 'no' ||
+			normalized === 'n' ||
+			normalized === '0'
+		) {
+			return false;
+		}
+	}
+
+	return null;
+}
+
+function toCanonicalNonNegativeNumber(value: unknown): number | null {
+	if (typeof value === 'number') {
+		if (!Number.isFinite(value) || value < 0) {
+			return null;
+		}
+
+		return value;
+	}
+
+	if (typeof value === 'string') {
+		const trimmed = value.trim();
+		if (!trimmed) {
+			return null;
+		}
+
+		const normalized = trimmed.replace(/[$,]/g, '');
+		const parsed = Number(normalized);
+		if (!Number.isFinite(parsed) || parsed < 0) {
+			return null;
+		}
+
+		return parsed;
+	}
+
+	return null;
+}
+
+function clampUnitInterval(value: number) {
+	return Math.max(0, Math.min(1, value));
+}
+
+function toCanonicalTravelMode(value: unknown): TravelMode | null {
+	if (typeof value !== 'string') {
+		return null;
+	}
+
+	const normalized = normalizeToken(value);
+	const canonical = TRAVEL_MODE_ALIASES[normalized] ?? normalized;
+
+	switch (canonical) {
+		case 'walk':
+		case 'bike':
+		case 'drive':
+		case 'transit':
+			return canonical;
+		default:
+			return null;
+	}
+}
+
+function toCanonicalSearchType(value: unknown): SearchType | null {
+	if (typeof value !== 'string') {
+		return null;
+	}
+
+	switch (normalizeToken(value)) {
+		case 'category':
+		case 'type':
+		case 'place_type':
+			return 'category';
+		case 'specific':
+		case 'named':
+		case 'place_name':
+			return 'specific';
+		default:
+			return null;
+	}
+}
+
+function toCanonicalNightlifePreference(value: unknown): NightlifePreference | null {
+	if (typeof value !== 'string') {
+		return null;
+	}
+
+	const normalized = normalizeToken(value);
+	const canonical = NIGHTLIFE_ALIASES[normalized] ?? normalized;
+
+	switch (canonical) {
+		case 'quiet':
+		case 'lively':
+			return canonical;
+		default:
+			return null;
+	}
+}
+
+function toCanonicalParkingPreference(value: unknown): ParkingPreference | null {
+	if (typeof value !== 'string') {
+		return null;
+	}
+
+	switch (normalizeToken(value)) {
+		case 'garage':
+			return 'garage';
+		case 'covered':
+		case 'carport':
+			return 'covered';
+		case 'any':
+		case 'surface':
+		case 'street':
+		case 'open':
+			return 'any';
+		default:
+			return null;
+	}
+}
+
+function toCanonicalLaundryPreference(value: unknown): LaundryPreference | null {
+	if (typeof value !== 'string') {
+		return null;
+	}
+
+	switch (normalizeToken(value)) {
+		case 'in_unit':
+		case 'in_suite':
+			return 'in_unit';
+		case 'on_site':
+		case 'shared':
+			return 'on_site';
+		case 'any':
+		case 'none':
+			return 'any';
+		default:
+			return null;
+	}
+}
+
+function sanitizeStringArray(value: unknown): string[] | null {
+	if (!Array.isArray(value)) {
+		return null;
+	}
+
+	const cleaned = value
+		.map((item) => toNonEmptyString(item))
+		.filter((item): item is string => item !== null);
+
+	return cleaned.length ? cleaned : null;
+}
+
+function applyNullableNumberDefault(
+	record: Record<string, unknown>,
+	key: string,
+	defaultValue: number | null = null
+) {
+	record[key] = toCanonicalNonNegativeNumber(record[key]) ?? defaultValue;
+}
+
+function applyBooleanDefault(record: Record<string, unknown>, key: string, defaultValue = false) {
+	record[key] = toCanonicalBoolean(record[key]) ?? defaultValue;
+}
+
+function applyImportanceDefault(record: Record<string, unknown>, key: string, defaultValue = 0) {
+	const numeric = toCanonicalNonNegativeNumber(record[key]);
+	record[key] = numeric == null ? defaultValue : clampUnitInterval(numeric);
+}
+
+function normalizeRangeObject(
+	record: Record<string, unknown>,
+	emptyWhen: (range: Record<string, unknown>) => boolean
+) {
+	applyNullableNumberDefault(record, 'min');
+	applyNullableNumberDefault(record, 'max');
+	applyBooleanDefault(record, 'is_dealbreaker', false);
+	applyImportanceDefault(record, 'importance', 0);
+
+	if (typeof record.min === 'number' && typeof record.max === 'number' && record.min > record.max) {
+		[record.min, record.max] = [record.max, record.min];
+	}
+
+	return emptyWhen(record) ? null : record;
+}
 
 
 const TRAVEL_MODE_ALIASES: Record<string, string> = {
@@ -19,46 +238,30 @@ const TRAVEL_MODE_ALIASES: Record<string, string> = {
 	subway: 'transit'
 };
 const travelModeSchema = z.preprocess((v) => {
-	if (typeof v === 'string') {
-		const lower = v.toLowerCase();
-		return TRAVEL_MODE_ALIASES[lower] ?? lower;
-	}
-	return v;
+	return toCanonicalTravelMode(v) ?? v;
 }, z.enum(['walk', 'bike', 'drive', 'transit']));
 const searchTypeSchema = z.preprocess(
-	(v) => (typeof v === 'string' ? v.toLowerCase() : v),
+	(v) => toCanonicalSearchType(v) ?? v,
 	z.enum(['category', 'specific'])
 );
 
 /** Coerce string booleans from LLM output ("true"/"false"/"True"/etc.) into real booleans. */
 const coerceBool = z.preprocess((v) => {
-	if (typeof v === 'string') {
-		const lower = v.toLowerCase();
-		if (lower === 'true') return true;
-		if (lower === 'false') return false;
-	}
-	return v;
+	return toCanonicalBoolean(v) ?? v;
 }, z.boolean());
 
 /** Coerce stringified numbers from LLM output. NaN and non-numeric strings → null. */
 function coerceToNumber(v: unknown): unknown {
-	if (typeof v === 'string') {
-		const trimmed = v.trim();
-		if (trimmed === '') return null;
-		const n = Number(trimmed);
-		return Number.isNaN(n) ? null : n;
-	}
-	if (typeof v === 'number' && Number.isNaN(v)) return null;
-	return v;
+	return toCanonicalNonNegativeNumber(v);
 }
 
 /** Nullable number — accepts strings, NaN, null, undefined. Used for most numeric fields. */
-const coerceNumNullable = z.preprocess(coerceToNumber, z.number().nullable());
+const coerceNumNullable = z.preprocess(coerceToNumber, z.number().finite().nullable());
 
 
-const importanceSchema = z.preprocess(coerceToNumber, z.number().nullable()).transform((v) => {
+const importanceSchema = z.preprocess(coerceToNumber, z.number().finite().nullable()).transform((v) => {
 	const n = v ?? 0;
-	return Math.max(0, Math.min(1, n));
+	return clampUnitInterval(n);
 });
 const clarificationResponseTypeSchema = z.enum(['boolean', 'number', 'single_select']);
 const NIGHTLIFE_ALIASES: Record<string, string> = {
@@ -70,16 +273,12 @@ const NIGHTLIFE_ALIASES: Record<string, string> = {
 	calm: 'quiet'
 };
 const nightlifePreferenceSchema = z.preprocess((v) => {
-	if (typeof v === 'string') {
-		const lower = v.toLowerCase();
-		return NIGHTLIFE_ALIASES[lower] ?? lower;
-	}
-	return v;
+	return toCanonicalNightlifePreference(v) ?? v;
 }, z.enum(['quiet', 'lively']));
 
 const proximityConstraintSchema = z.object({
-	label: z.string(),
-	search_query: z.string(),
+	label: z.string().trim().min(1),
+	search_query: z.string().trim().min(1),
 	search_type: searchTypeSchema,
 	travel_mode: travelModeSchema,
 	max_minutes: coerceNumNullable,
@@ -102,27 +301,69 @@ const nullableNumberRangeSchema = z.object({
 });
 
 export const clarificationAnswerSchema = z.object({
-	id: z.string(),
+	id: z.string().trim().min(1),
 	boolean_value: coerceBool.nullable().optional(),
 	number_value: coerceNumNullable.optional(),
 	string_value: z.string().trim().min(1).nullable().optional()
 });
 
+const clarificationQuestionOptionSchema = z.object({
+	label: z.string().trim().min(1).max(80),
+	value: z.string().trim().min(1).max(80)
+});
+
 export const clarificationQuestionSchema = z.object({
-	id: z.string(),
-	field_path: z.string(),
-	question: z.string(),
+	id: z.string().trim().min(1),
+	field_path: z
+		.string()
+		.trim()
+		.min(1)
+		.refine(
+			(value) => isAllowedClarificationFieldPath(value),
+			'Clarification questions must target a supported profile field.'
+		),
+	question: z.string().trim().min(1).max(400),
 	response_type: clarificationResponseTypeSchema,
-	options: z
-		.array(
-			z.object({
-				label: z.string(),
-				value: z.string()
-			})
-		)
-		.nullable(),
-	unit: z.string().nullable(),
-	why_asked: z.string()
+	options: z.array(clarificationQuestionOptionSchema).max(6).nullable(),
+	unit: z.string().trim().min(1).max(24).nullable(),
+	why_asked: z.string().trim().min(1).max(240)
+}).superRefine((question, ctx) => {
+	if (question.response_type === 'single_select') {
+		if (!question.options || question.options.length < 2) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'single_select questions must provide 2 to 6 options.',
+				path: ['options']
+			});
+		}
+
+		const seen = new Set<string>();
+		for (const option of question.options ?? []) {
+			if (seen.has(option.value)) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: 'single_select options must use unique values.',
+					path: ['options']
+				});
+				break;
+			}
+			seen.add(option.value);
+		}
+	} else if (question.options !== null) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: 'Only single_select questions may include options.',
+			path: ['options']
+		});
+	}
+
+	if (question.response_type !== 'number' && question.unit !== null) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: 'Only number questions may include a unit.',
+			path: ['unit']
+		});
+	}
 });
 
 export const apartmentPreferenceMessageSchema = z.object({
@@ -144,7 +385,7 @@ export const apartmentPreferenceSchema = z.object({
 		.nullable(),
 	commute: z
 		.object({
-			search_query: z.string(),
+			search_query: z.string().trim().min(1),
 			travel_mode: travelModeSchema,
 			max_minutes: coerceNumNullable,
 			is_dealbreaker: coerceBool,
@@ -165,7 +406,7 @@ export const apartmentPreferenceSchema = z.object({
 			pets: z
 				.object({
 					allowed: coerceBool,
-					pet_types: z.array(z.string()).nullable(),
+					pet_types: z.array(z.string().trim().min(1)).nullable(),
 					is_dealbreaker: coerceBool,
 					importance: importanceSchema
 				})
@@ -173,27 +414,20 @@ export const apartmentPreferenceSchema = z.object({
 			parking: z
 				.object({
 					required: coerceBool,
-					type_preference: z
-					.preprocess(
-						(v) => (typeof v === 'string' ? v.toLowerCase() : v),
+					type_preference: z.preprocess(
+						(v) => toCanonicalParkingPreference(v) ?? v,
 						z.enum(['garage', 'covered', 'any'])
-					)
-					.nullable(),
+					).nullable(),
 					is_dealbreaker: coerceBool,
 					importance: importanceSchema
 				})
 				.nullable(),
 			laundry: z
 				.object({
-					preference: z.preprocess((v) => {
-					if (typeof v === 'string') {
-						const lower = v.toLowerCase().replace(/[\s-]/g, '_');
-						if (lower === 'in_unit' || lower === 'in_suite') return 'in_unit';
-						if (lower === 'on_site' || lower === 'shared') return 'on_site';
-						return lower;
-					}
-					return v;
-				}, z.enum(['in_unit', 'on_site', 'any'])),
+					preference: z.preprocess(
+						(v) => toCanonicalLaundryPreference(v) ?? v,
+						z.enum(['in_unit', 'on_site', 'any'])
+					),
 					is_dealbreaker: coerceBool,
 					importance: importanceSchema
 				})
@@ -217,7 +451,7 @@ export const apartmentPreferenceSchema = z.object({
 			amenities: z
 				.array(
 					z.object({
-						name: z.string(),
+						name: z.string().trim().min(1),
 						is_dealbreaker: coerceBool,
 						importance: importanceSchema
 					})
@@ -241,10 +475,6 @@ const UNIT_REQUIREMENTS_DEFAULTS = {
 	amenities: null
 };
 
-const RANGE_DEFAULTS = { min: null, max: null, is_dealbreaker: false, importance: 0 };
-
-const PREFERENCE_DEFAULTS = { is_dealbreaker: false, importance: 0 };
-
 /** Fill undefined fields with defaults so partial LLM output passes strict validation. */
 function backfillDefaults(input: unknown): unknown {
 	if (!input || typeof input !== 'object') return input;
@@ -255,17 +485,19 @@ function backfillDefaults(input: unknown): unknown {
 		obj.budget = { max_rent: null, ideal_rent: null };
 	} else {
 		const b = obj.budget as Record<string, unknown>;
-		if (!('max_rent' in b)) b.max_rent = null;
-		if (!('ideal_rent' in b)) b.ideal_rent = null;
+		applyNullableNumberDefault(b, 'max_rent');
+		applyNullableNumberDefault(b, 'ideal_rent');
 	}
 
 	// Default missing top-level fields
 	if (!Array.isArray(obj.constraints)) obj.constraints = [];
-	if (typeof obj.raw_input !== 'string') obj.raw_input = '';
+	obj.raw_input = typeof obj.raw_input === 'string' ? obj.raw_input.trim() : '';
 
-	// Nullify non-object values for nullable object fields
+	// Default missing nullable objects to null and nullify invalid non-objects.
 	for (const key of ['commute', 'nightlife', 'unit_requirements'] as const) {
-		if (obj[key] !== null && obj[key] !== undefined && typeof obj[key] !== 'object') {
+		if (!(key in obj) || obj[key] === undefined) {
+			obj[key] = null;
+		} else if (obj[key] !== null && typeof obj[key] !== 'object') {
 			obj[key] = null;
 		}
 	}
@@ -273,39 +505,50 @@ function backfillDefaults(input: unknown): unknown {
 	// Backfill commute sub-fields (nullify if search_query is not a valid string)
 	if (obj.commute && typeof obj.commute === 'object') {
 		const c = obj.commute as Record<string, unknown>;
-		if (typeof c.search_query !== 'string' || c.search_query.trim() === '') {
+		const searchQuery = toNonEmptyString(c.search_query);
+		if (!searchQuery) {
 			obj.commute = null;
 		} else {
-			if (!('max_minutes' in c)) c.max_minutes = null;
-			if (!('is_dealbreaker' in c)) c.is_dealbreaker = false;
-			if (!('importance' in c)) c.importance = 0.5;
+			c.search_query = searchQuery;
+			c.travel_mode = toCanonicalTravelMode(c.travel_mode) ?? 'drive';
+			applyNullableNumberDefault(c, 'max_minutes');
+			applyBooleanDefault(c, 'is_dealbreaker', false);
+			applyImportanceDefault(c, 'importance', 0.5);
 		}
 	}
 
 	// Backfill nightlife sub-fields (nullify if preference is invalid)
 	if (obj.nightlife && typeof obj.nightlife === 'object') {
 		const n = obj.nightlife as Record<string, unknown>;
-		if (typeof n.preference !== 'string') {
+		const preference = toCanonicalNightlifePreference(n.preference);
+		if (!preference) {
 			obj.nightlife = null;
 		} else {
-			if (!('is_dealbreaker' in n)) n.is_dealbreaker = false;
-			if (!('importance' in n)) n.importance = 0.5;
+			n.preference = preference;
+			applyBooleanDefault(n, 'is_dealbreaker', false);
+			applyImportanceDefault(n, 'importance', 0.5);
 		}
 	}
 
 	// Backfill constraint items
 	if (Array.isArray(obj.constraints)) {
-		obj.constraints = obj.constraints.filter((item: unknown) => {
-			if (!item || typeof item !== 'object') return false;
+		obj.constraints = obj.constraints.flatMap((item: unknown) => {
+			if (!item || typeof item !== 'object') return [];
 			const c = item as Record<string, unknown>;
-			// Drop constraints with invalid required string fields
-			if (typeof c.label !== 'string' || typeof c.search_query !== 'string') return false;
-			if (!('max_minutes' in c)) c.max_minutes = null;
-			if (!('is_dealbreaker' in c)) c.is_dealbreaker = false;
-			if (!('importance' in c)) c.importance = 0.5;
-			if (!('search_type' in c)) c.search_type = 'category';
-			if (!('travel_mode' in c)) c.travel_mode = 'drive';
-			return true;
+			const label = toNonEmptyString(c.label);
+			const searchQuery = toNonEmptyString(c.search_query);
+
+			// Drop constraints with invalid required string fields.
+			if (!label || !searchQuery) return [];
+
+			c.label = label;
+			c.search_query = searchQuery;
+			c.search_type = toCanonicalSearchType(c.search_type) ?? 'category';
+			c.travel_mode = toCanonicalTravelMode(c.travel_mode) ?? 'drive';
+			applyNullableNumberDefault(c, 'max_minutes');
+			applyBooleanDefault(c, 'is_dealbreaker', false);
+			applyImportanceDefault(c, 'importance', 0.5);
+			return [c];
 		});
 	}
 
@@ -327,53 +570,99 @@ function backfillDefaults(input: unknown): unknown {
 		// Range-like objects: bedrooms, sqft, lease_length_months
 		for (const key of ['bedrooms', 'sqft', 'lease_length_months']) {
 			if (ur[key] && typeof ur[key] === 'object') {
-				ur[key] = { ...RANGE_DEFAULTS, ...(ur[key] as Record<string, unknown>) };
+				ur[key] = normalizeRangeObject(ur[key] as Record<string, unknown>, (range) => {
+					return range.min == null && range.max == null;
+				});
 			}
 		}
+
 		// Bathrooms
 		if (ur.bathrooms && typeof ur.bathrooms === 'object') {
 			const b = ur.bathrooms as Record<string, unknown>;
-			if (!('min' in b)) b.min = null;
-			if (!('is_dealbreaker' in b)) b.is_dealbreaker = false;
-			if (!('importance' in b)) b.importance = 0;
+			applyNullableNumberDefault(b, 'min');
+			applyBooleanDefault(b, 'is_dealbreaker', false);
+			applyImportanceDefault(b, 'importance', 0);
+			if (b.min == null) {
+				ur.bathrooms = null;
+			}
 		}
+
 		// Pets
 		if (ur.pets && typeof ur.pets === 'object') {
 			const p = ur.pets as Record<string, unknown>;
-			if (!('pet_types' in p)) p.pet_types = null;
-			else if (!Array.isArray(p.pet_types)) p.pet_types = null;
-			if (!('is_dealbreaker' in p)) p.is_dealbreaker = false;
-			if (!('importance' in p)) p.importance = 0.5;
+			const petTypes = sanitizeStringArray(p.pet_types);
+			const allowed = toCanonicalBoolean(p.allowed);
+
+			if (allowed == null && petTypes == null) {
+				ur.pets = null;
+			} else {
+				p.allowed = allowed ?? true;
+				p.pet_types = petTypes;
+				applyBooleanDefault(p, 'is_dealbreaker', false);
+				applyImportanceDefault(p, 'importance', 0.5);
+			}
 		}
+
 		// Parking
 		if (ur.parking && typeof ur.parking === 'object') {
 			const p = ur.parking as Record<string, unknown>;
-			if (!('type_preference' in p)) p.type_preference = null;
-			if (!('is_dealbreaker' in p)) p.is_dealbreaker = false;
-			if (!('importance' in p)) p.importance = 0.5;
+			const typePreference = toCanonicalParkingPreference(p.type_preference);
+			const required = toCanonicalBoolean(p.required);
+
+			if (required == null && typePreference == null) {
+				ur.parking = null;
+			} else {
+				p.required = required ?? true;
+				p.type_preference = typePreference;
+				applyBooleanDefault(p, 'is_dealbreaker', false);
+				applyImportanceDefault(p, 'importance', 0.5);
+			}
 		}
+
 		// Laundry
 		if (ur.laundry && typeof ur.laundry === 'object') {
 			const l = ur.laundry as Record<string, unknown>;
-			if (!('is_dealbreaker' in l)) l.is_dealbreaker = false;
-			if (!('importance' in l)) l.importance = 0.3;
+			const preference = toCanonicalLaundryPreference(l.preference);
+			if (!preference) {
+				ur.laundry = null;
+			} else {
+				l.preference = preference;
+				applyBooleanDefault(l, 'is_dealbreaker', false);
+				applyImportanceDefault(l, 'importance', 0.3);
+			}
 		}
+
 		// Furnished
 		if (ur.furnished && typeof ur.furnished === 'object') {
 			const f = ur.furnished as Record<string, unknown>;
-			if (!('is_dealbreaker' in f)) f.is_dealbreaker = false;
-			if (!('importance' in f)) f.importance = 0.3;
+			const preferred = toCanonicalBoolean(f.preferred);
+			if (preferred == null) {
+				ur.furnished = null;
+			} else {
+				f.preferred = preferred;
+				applyBooleanDefault(f, 'is_dealbreaker', false);
+				applyImportanceDefault(f, 'importance', 0.3);
+			}
 		}
+
 		// Amenities array items
 		if (Array.isArray(ur.amenities)) {
-			ur.amenities = ur.amenities.filter((item: unknown) => {
-				if (!item || typeof item !== 'object') return false;
+			ur.amenities = ur.amenities.flatMap((item: unknown) => {
+				if (!item || typeof item !== 'object') return [];
 				const a = item as Record<string, unknown>;
-				if (typeof a.name !== 'string') return false;
-				if (!('is_dealbreaker' in a)) a.is_dealbreaker = false;
-				if (!('importance' in a)) a.importance = 0.3;
-				return true;
+				const name = toNonEmptyString(a.name);
+				if (!name) return [];
+				a.name = name;
+				applyBooleanDefault(a, 'is_dealbreaker', false);
+				applyImportanceDefault(a, 'importance', 0.3);
+				return [a];
 			});
+		}
+
+		if (
+			Object.values(ur).every((value) => value == null || (Array.isArray(value) && value.length === 0))
+		) {
+			obj.unit_requirements = null;
 		}
 	}
 
@@ -396,13 +685,29 @@ export const apartmentPreferenceInputSchema = z.object({
 	model: z.string().trim().min(1).optional(),
 	clarification_answers: z.array(clarificationAnswerSchema).default([]),
 	message_history: z.array(apartmentPreferenceMessageSchema).max(100).default([]),
-	current_profile: apartmentPreferenceSchema.nullable().optional()
+	current_profile: apartmentPreferenceLenientSchema.nullable().optional()
 });
 
 export const apartmentPreferenceExtractionSchema = z.object({
 	status: z.enum(['complete', 'needs_clarification']),
-	profile: apartmentPreferenceSchema,
+	profile: apartmentPreferenceLenientSchema,
 	clarification_questions: z.array(clarificationQuestionSchema).max(3)
+}).superRefine((result, ctx) => {
+	if (result.status === 'complete' && result.clarification_questions.length > 0) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: 'complete results cannot include clarification questions.',
+			path: ['clarification_questions']
+		});
+	}
+
+	if (result.status === 'needs_clarification' && result.clarification_questions.length === 0) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: 'needs_clarification results must include at least one question.',
+			path: ['clarification_questions']
+		});
+	}
 });
 
 export type ApartmentPreferenceInput = z.infer<typeof apartmentPreferenceInputSchema>;
@@ -422,6 +727,13 @@ type ResolvedApartmentPreferenceModel = {
 	requestedModel: string;
 	resolvedModel: string;
 };
+
+const EXTRACTION_REPAIR_PROMPT = [
+	'Your previous response failed schema validation.',
+	'Return valid JSON only.',
+	'Keep profile fields normalized and clarification metadata valid.',
+	'Only use supported clarification field_path values, and ensure status/question counts agree.'
+].join(' ');
 
 const APARTMENT_PREFERENCE_SYSTEM_PROMPT = `You extract apartment-ranking preferences from natural language into the LifeMatchProfile schema.
 
@@ -508,8 +820,8 @@ function formatCurrentProfile(currentProfile: ApartmentPreferenceInput['current_
 	return JSON.stringify(currentProfile, null, 2);
 }
 
-function buildExtractionPrompt(input: ApartmentPreferenceInput) {
-	return [
+function buildExtractionPrompt(input: ApartmentPreferenceInput, repairHint?: string) {
+	const sections = [
 		'Latest user apartment preference request:',
 		input.prompt,
 		'',
@@ -524,7 +836,13 @@ function buildExtractionPrompt(input: ApartmentPreferenceInput) {
 		'',
 		'Update the structured profile using the full conversation and the current JSON draft.',
 		'Return the extraction result.'
-	].join('\n');
+	];
+
+	if (repairHint) {
+		sections.push('', 'Validation repair instructions:', repairHint);
+	}
+
+	return sections.join('\n');
 }
 
 function validateClarificationAnswers(clarificationAnswers: ApartmentPreferenceInput['clarification_answers']) {
@@ -542,7 +860,7 @@ function validateClarificationAnswers(clarificationAnswers: ApartmentPreferenceI
 }
 
 function getOpenRouterApiKey(): string {
-	const apiKey = env.OPENROUTER_API_KEY?.trim();
+	const apiKey = getPrivateEnv('OPENROUTER_API_KEY')?.trim();
 
 	if (!apiKey) {
 		throw new Error('OPENROUTER_API_KEY is not configured.');
@@ -553,7 +871,7 @@ function getOpenRouterApiKey(): string {
 
 function resolveApartmentPreferenceModel(modelOverride?: string): ResolvedApartmentPreferenceModel {
 	const requestedModel =
-		modelOverride?.trim() || env.OPENROUTER_MODEL?.trim() || DEFAULT_OPENROUTER_MODEL;
+		modelOverride?.trim() || getPrivateEnv('OPENROUTER_MODEL')?.trim() || DEFAULT_OPENROUTER_MODEL;
 
 	return {
 		requestedModel,
@@ -569,21 +887,42 @@ export function getApartmentPreferenceModel(modelOverride?: string): string {
 	return resolveApartmentPreferenceModel(modelOverride).resolvedModel;
 }
 
+function isRecoverableStructuredOutputError(err: unknown) {
+	return (
+		NoObjectGeneratedError.isInstance(err) &&
+		(JSONParseError.isInstance(err.cause) || TypeValidationError.isInstance(err.cause))
+	);
+}
+
 async function generateApartmentPreferenceExtraction(
 	openrouter: ReturnType<typeof createOpenRouter>,
 	selectedModel: string,
-	parsedInput: ApartmentPreferenceInput
+	parsedInput: ApartmentPreferenceInput,
+	repairHint?: string
 ) {
-	return generateText({
-		model: openrouter(selectedModel),
-		system: APARTMENT_PREFERENCE_SYSTEM_PROMPT,
-		prompt: buildExtractionPrompt(parsedInput),
-		output: Output.object({
-			schema: apartmentPreferenceExtractionSchema,
-			description:
-				'LifeMatch extraction result containing a normalized profile and any remaining clarifying questions.'
-		})
-	});
+	try {
+		return await generateText({
+			model: openrouter(selectedModel),
+			system: APARTMENT_PREFERENCE_SYSTEM_PROMPT,
+			prompt: buildExtractionPrompt(parsedInput, repairHint),
+			output: Output.object({
+				schema: apartmentPreferenceExtractionSchema,
+				description:
+					'LifeMatch extraction result containing a normalized profile and any remaining clarifying questions.'
+			})
+		});
+	} catch (err) {
+		if (repairHint || !isRecoverableStructuredOutputError(err)) {
+			throw err;
+		}
+
+		return generateApartmentPreferenceExtraction(
+			openrouter,
+			selectedModel,
+			parsedInput,
+			EXTRACTION_REPAIR_PROMPT
+		);
+	}
 }
 
 export async function extractApartmentPreferences(input: ApartmentPreferenceInput) {
