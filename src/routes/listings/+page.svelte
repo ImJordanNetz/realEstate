@@ -40,6 +40,7 @@
 		type ListingHighlight,
 	} from "$lib/components/ListingCard.svelte";
 	import ClarifyingQuestions from "$lib/components/ClarifyingQuestions.svelte";
+	import SearchComposer from "$lib/components/SearchComposer.svelte";
 	import GridSpinner from "$lib/components/ui/GridSpinner.svelte";
 	import { Skeleton } from "$lib/components/ui/skeleton";
 	import { LocalStore } from "$lib/localStore.svelte";
@@ -97,6 +98,15 @@
 	const favoriteListingIds = fromStore(favoriteListingIdsStore);
 	let favoriteListingIdSet = $derived(new Set(favoriteListingIds.current));
 	let showOnlyFavorites = $state(false);
+	let revisionQuery = $state("");
+	let revisionController: AbortController | null = null;
+
+	function handleRevisionSubmit(nextPrompt: string) {
+		revisionController?.abort();
+		const controller = new AbortController();
+		revisionController = controller;
+		void submitPreferenceRevision(nextPrompt, controller.signal);
+	}
 
 	function uiLog(step: string, details?: Record<string, unknown>) {
 		console.info(`[listings-ui] ${step}`, details ?? {});
@@ -674,6 +684,7 @@
 						requestId,
 						status: response.status,
 						message: getApartmentSearchErrorMessage(payload),
+						payload,
 						durationMs: Date.now() - startedAt,
 					});
 					searchError = {
@@ -1389,6 +1400,22 @@
 			{/if}
 		</div>
 	</div>
+
+	<!-- Floating search composer at bottom center of map -->
+	{#if questionsSubmitted}
+		<div
+			class="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center pb-6"
+		>
+			<div class="pointer-events-auto w-1/4">
+				<SearchComposer
+					bind:value={revisionQuery}
+					placeholder="Refine your search..."
+					disabled={isLoading}
+					onsubmit={handleRevisionSubmit}
+				/>
+			</div>
+		</div>
+	{/if}
 </div>
 
 <style>

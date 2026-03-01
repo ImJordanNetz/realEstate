@@ -8,7 +8,24 @@ const DEFAULT_OPENROUTER_MODEL = 'openai/gpt-5.2';
 
 const travelModeSchema = z.enum(['walk', 'bike', 'drive', 'transit']);
 const searchTypeSchema = z.enum(['category', 'specific']);
-const importanceSchema = z.number().min(0).max(1);
+
+/** Coerce string booleans from LLM output ("true"/"false"/"True"/etc.) into real booleans. */
+const coerceBool = z.preprocess((v) => {
+	if (typeof v === 'string') {
+		const lower = v.toLowerCase();
+		if (lower === 'true') return true;
+		if (lower === 'false') return false;
+	}
+	return v;
+}, z.boolean());
+
+/** Coerce stringified numbers from LLM output into real numbers. */
+const coerceNum = z.preprocess(
+	(v) => (typeof v === 'string' && v.trim() !== '' ? Number(v) : v),
+	z.number()
+);
+
+const importanceSchema = coerceNum.pipe(z.number().min(0).max(1));
 const clarificationResponseTypeSchema = z.enum(['boolean', 'number', 'single_select']);
 const nightlifePreferenceSchema = z.enum(['quiet', 'lively']);
 
@@ -17,29 +34,29 @@ const proximityConstraintSchema = z.object({
 	search_query: z.string(),
 	search_type: searchTypeSchema,
 	travel_mode: travelModeSchema,
-	max_minutes: z.number().positive().nullable(),
-	is_dealbreaker: z.boolean(),
+	max_minutes: coerceNum.pipe(z.number().positive()).nullable(),
+	is_dealbreaker: coerceBool,
 	importance: importanceSchema
 });
 
 const nullableIntegerRangeSchema = z.object({
-	min: z.number().int().nullable(),
-	max: z.number().int().nullable(),
-	is_dealbreaker: z.boolean(),
+	min: coerceNum.pipe(z.number().int()).nullable(),
+	max: coerceNum.pipe(z.number().int()).nullable(),
+	is_dealbreaker: coerceBool,
 	importance: importanceSchema
 });
 
 const nullableNumberRangeSchema = z.object({
-	min: z.number().positive().nullable(),
-	max: z.number().positive().nullable(),
-	is_dealbreaker: z.boolean(),
+	min: coerceNum.pipe(z.number().positive()).nullable(),
+	max: coerceNum.pipe(z.number().positive()).nullable(),
+	is_dealbreaker: coerceBool,
 	importance: importanceSchema
 });
 
 export const clarificationAnswerSchema = z.object({
 	id: z.string(),
-	boolean_value: z.boolean().nullable().optional(),
-	number_value: z.number().nullable().optional(),
+	boolean_value: coerceBool.nullable().optional(),
+	number_value: coerceNum.nullable().optional(),
 	string_value: z.string().trim().min(1).nullable().optional()
 });
 
@@ -67,13 +84,13 @@ export const apartmentPreferenceMessageSchema = z.object({
 
 export const apartmentPreferenceSchema = z.object({
 	budget: z.object({
-		max_rent: z.number().positive().nullable(),
-		ideal_rent: z.number().positive().nullable()
+		max_rent: coerceNum.pipe(z.number().positive()).nullable(),
+		ideal_rent: coerceNum.pipe(z.number().positive()).nullable()
 	}),
 	nightlife: z
 		.object({
 			preference: nightlifePreferenceSchema,
-			is_dealbreaker: z.boolean(),
+			is_dealbreaker: coerceBool,
 			importance: importanceSchema
 		})
 		.nullable(),
@@ -81,8 +98,8 @@ export const apartmentPreferenceSchema = z.object({
 		.object({
 			search_query: z.string(),
 			travel_mode: travelModeSchema,
-			max_minutes: z.number().positive().nullable(),
-			is_dealbreaker: z.boolean(),
+			max_minutes: coerceNum.pipe(z.number().positive()).nullable(),
+			is_dealbreaker: coerceBool,
 			importance: importanceSchema
 		})
 		.nullable(),
@@ -92,47 +109,47 @@ export const apartmentPreferenceSchema = z.object({
 			bedrooms: nullableIntegerRangeSchema.nullable(),
 			bathrooms: z
 				.object({
-					min: z.number().positive().nullable(),
-					is_dealbreaker: z.boolean(),
+					min: coerceNum.pipe(z.number().positive()).nullable(),
+					is_dealbreaker: coerceBool,
 					importance: importanceSchema
 				})
 				.nullable(),
 			pets: z
 				.object({
-					allowed: z.boolean(),
+					allowed: coerceBool,
 					pet_types: z.array(z.string()).nullable(),
-					is_dealbreaker: z.boolean(),
+					is_dealbreaker: coerceBool,
 					importance: importanceSchema
 				})
 				.nullable(),
 			parking: z
 				.object({
-					required: z.boolean(),
+					required: coerceBool,
 					type_preference: z.enum(['garage', 'covered', 'any']).nullable(),
-					is_dealbreaker: z.boolean(),
+					is_dealbreaker: coerceBool,
 					importance: importanceSchema
 				})
 				.nullable(),
 			laundry: z
 				.object({
 					preference: z.enum(['in_unit', 'on_site', 'any']),
-					is_dealbreaker: z.boolean(),
+					is_dealbreaker: coerceBool,
 					importance: importanceSchema
 				})
 				.nullable(),
 			furnished: z
 				.object({
-					preferred: z.boolean(),
-					is_dealbreaker: z.boolean(),
+					preferred: coerceBool,
+					is_dealbreaker: coerceBool,
 					importance: importanceSchema
 				})
 				.nullable(),
 			sqft: nullableNumberRangeSchema.nullable(),
 			lease_length_months: z
 				.object({
-					min: z.number().int().positive().nullable(),
-					max: z.number().int().positive().nullable(),
-					is_dealbreaker: z.boolean(),
+					min: coerceNum.pipe(z.number().int().positive()).nullable(),
+					max: coerceNum.pipe(z.number().int().positive()).nullable(),
+					is_dealbreaker: coerceBool,
 					importance: importanceSchema
 				})
 				.nullable(),
@@ -140,7 +157,7 @@ export const apartmentPreferenceSchema = z.object({
 				.array(
 					z.object({
 						name: z.string(),
-						is_dealbreaker: z.boolean(),
+						is_dealbreaker: coerceBool,
 						importance: importanceSchema
 					})
 				)
@@ -149,6 +166,78 @@ export const apartmentPreferenceSchema = z.object({
 		.nullable(),
 	raw_input: z.string()
 });
+
+/** Default shape for missing fields — null for optional sub-objects, [] for arrays. */
+const UNIT_REQUIREMENTS_DEFAULTS = {
+	bedrooms: null,
+	bathrooms: null,
+	pets: null,
+	parking: null,
+	laundry: null,
+	furnished: null,
+	sqft: null,
+	lease_length_months: null,
+	amenities: null
+};
+
+const RANGE_DEFAULTS = { min: null, max: null, is_dealbreaker: false, importance: 0 };
+
+/** Fill undefined fields with defaults so partial LLM output passes strict validation. */
+function backfillDefaults(input: unknown): unknown {
+	if (!input || typeof input !== 'object') return input;
+	const obj = input as Record<string, unknown>;
+
+	// Default missing constraints to []
+	if (!('constraints' in obj)) obj.constraints = [];
+
+	// Backfill commute sub-fields
+	if (obj.commute && typeof obj.commute === 'object') {
+		const c = obj.commute as Record<string, unknown>;
+		if (!('max_minutes' in c)) c.max_minutes = null;
+		if (!('is_dealbreaker' in c)) c.is_dealbreaker = false;
+		if (!('importance' in c)) c.importance = 0.5;
+	}
+
+	// Backfill nightlife sub-fields
+	if (obj.nightlife && typeof obj.nightlife === 'object') {
+		const n = obj.nightlife as Record<string, unknown>;
+		if (!('is_dealbreaker' in n)) n.is_dealbreaker = false;
+		if (!('importance' in n)) n.importance = 0.5;
+	}
+
+	// Backfill unit_requirements sub-fields
+	if (obj.unit_requirements && typeof obj.unit_requirements === 'object') {
+		const ur = obj.unit_requirements as Record<string, unknown>;
+		for (const [key, defaultVal] of Object.entries(UNIT_REQUIREMENTS_DEFAULTS)) {
+			if (!(key in ur)) ur[key] = defaultVal;
+		}
+		// Backfill inner range-like objects that are present but partial
+		for (const key of ['bedrooms', 'sqft', 'lease_length_months']) {
+			if (ur[key] && typeof ur[key] === 'object') {
+				ur[key] = { ...RANGE_DEFAULTS, ...(ur[key] as Record<string, unknown>) };
+			}
+		}
+		if (ur.bathrooms && typeof ur.bathrooms === 'object') {
+			const b = ur.bathrooms as Record<string, unknown>;
+			if (!('min' in b)) b.min = null;
+			if (!('is_dealbreaker' in b)) b.is_dealbreaker = false;
+			if (!('importance' in b)) b.importance = 0;
+		}
+	}
+
+	return obj;
+}
+
+/**
+ * Lenient version of apartmentPreferenceSchema that defaults missing fields.
+ * Used for API request validation where LLM output may omit fields.
+ * The strict base schema (apartmentPreferenceSchema) is used for LLM structured
+ * output where OpenAI requires all properties in `required`.
+ */
+export const apartmentPreferenceLenientSchema = z.preprocess(
+	backfillDefaults,
+	apartmentPreferenceSchema
+);
 
 export const apartmentPreferenceInputSchema = z.object({
 	prompt: z.string().trim().min(1).max(4000),

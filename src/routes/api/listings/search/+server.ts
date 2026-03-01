@@ -1,13 +1,13 @@
 import { json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
-import { apartmentPreferenceSchema } from '$lib/server/apartment-preferences';
+import { apartmentPreferenceLenientSchema } from '$lib/server/apartment-preferences';
 import { loadAllRentcastListings } from '$lib/server/apartment-inventory';
 import { searchApartments } from '$lib/server/apartment-search';
 import { createGoogleMapsProviders } from '$lib/server/google-maps';
 
 const apartmentSearchRequestSchema = z.object({
-	preferences: apartmentPreferenceSchema
+	preferences: apartmentPreferenceLenientSchema
 });
 
 export const POST: RequestHandler = async ({ request }) => {
@@ -33,7 +33,8 @@ export const POST: RequestHandler = async ({ request }) => {
 
 	if (!parsed.success) {
 		log('api', 'invalid_payload', {
-			issues: parsed.error.issues.length
+			issues: parsed.error.issues.length,
+			details: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`)
 		});
 		return json(
 			{
