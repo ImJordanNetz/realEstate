@@ -13,6 +13,27 @@
 		status: "pass" | "fail" | "unknown";
 	};
 
+	export type ListingPlaceComparisonCandidate = {
+		id: string;
+		name: string;
+		address: string | null;
+		straightLineMeters: number;
+		routeMinutes: number | null;
+		selectedByRoute: boolean;
+		closestByDistance: boolean;
+	};
+
+	export type ListingPlaceComparison = {
+		key: string;
+		label: string;
+		query: string;
+		travelMode: "walk" | "bike" | "drive" | "transit";
+		source: "commute" | "constraint" | "amenity";
+		selectedPlaceId: string | null;
+		closestPlaceId: string | null;
+		comparedPlaces: ListingPlaceComparisonCandidate[];
+	};
+
 	type RepresentativePhoto = {
 		roomType: string;
 		localPath: string;
@@ -35,6 +56,7 @@
 		matchScore?: number;
 		requiredSummary?: string | null;
 		highlights?: ListingHighlight[];
+		placeComparisons?: ListingPlaceComparison[];
 		representativePhotos?: RepresentativePhoto[];
 	};
 
@@ -52,6 +74,8 @@
 		authorUri: string | null;
 		googleMapsUri: string | null;
 	};
+
+	const SHOW_PLACE_COMPARISONS = false;
 
 	let {
 		listing,
@@ -132,6 +156,39 @@
 		return roomType.replace(/-/g, " ");
 	}
 
+	function formatTravelMode(travelMode: ListingPlaceComparison["travelMode"]) {
+		switch (travelMode) {
+			case "walk":
+				return "Walk";
+			case "bike":
+				return "Bike";
+			case "drive":
+				return "Drive";
+			case "transit":
+				return "Transit";
+		}
+	}
+
+	function formatComparisonDistance(distanceMeters: number) {
+		const miles = distanceMeters / 1609.344;
+		return `${miles < 1 ? miles.toFixed(2) : miles.toFixed(1)} mi`;
+	}
+
+	function formatComparisonMinutes(minutes: number | null) {
+		return minutes == null ? "route unavailable" : `${minutes.toFixed(1)} min route`;
+	}
+
+	function formatComparisonSource(source: ListingPlaceComparison["source"]) {
+		switch (source) {
+			case "commute":
+				return "Commute";
+			case "constraint":
+				return "Constraint";
+			case "amenity":
+				return "Amenity";
+		}
+	}
+
 	$effect(() => {
 		photo = null;
 		photoLoadFailed = false;
@@ -171,12 +228,11 @@
 		: 'border-border'} {!selected && onclick
 		? 'cursor-pointer'
 		: ''} {selected ? 'flex-col' : 'flex-row'}"
-	style={selected ? "height: 70vh;" : ""}
 	{onclick}
 >
 	<div
 		class="relative shrink-0 overflow-hidden bg-gradient-to-br from-muted to-muted/60 {selected
-			? 'aspect-video w-full'
+			? 'aspect-[16/7] w-full'
 			: 'w-28 self-stretch'}"
 	>
 		{#if showRepresentativeCarousel}
@@ -278,7 +334,7 @@
 
 	<div
 		class="flex min-w-0 shrink-0 flex-col p-2 {selected
-			? 'gap-3 p-5'
+			? 'min-h-0 gap-3 overflow-y-auto p-5'
 			: 'flex-1 gap-1.5'}"
 	>
 		<div class="flex items-center justify-between">
@@ -432,6 +488,107 @@
 						</span>
 					{/if}
 				{/each}
+			</div>
+		{/if}
+
+		{#if SHOW_PLACE_COMPARISONS && selected && listing.placeComparisons?.length}
+			<div class="rounded-2xl border border-sky-200/80 bg-sky-50/70 p-3">
+				<div class="flex items-center justify-between gap-3">
+					<div>
+						<p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-900">
+							Compared places
+						</p>
+						<p class="text-xs text-sky-900/70">
+							Debug view of the places considered for this listing.
+						</p>
+					</div>
+					<span class="rounded-full bg-white/80 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-800">
+						{listing.placeComparisons.length} groups
+					</span>
+				</div>
+
+				<div class="mt-3 flex flex-col gap-3">
+					{#each listing.placeComparisons as comparison (comparison.key)}
+						<div class="rounded-xl border border-sky-100 bg-white/85 p-3">
+							<div class="flex items-start justify-between gap-3">
+								<div class="min-w-0">
+									<div class="flex flex-wrap items-center gap-2">
+										<p class="font-semibold text-foreground">
+											{comparison.label}
+										</p>
+										<span class="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-sky-800">
+											{formatComparisonSource(
+												comparison.source,
+											)}
+										</span>
+									</div>
+									<p class="text-[11px] text-muted-foreground">
+										{formatTravelMode(comparison.travelMode)} search for
+										"{comparison.query}"
+									</p>
+								</div>
+								<span class="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+									{comparison.comparedPlaces.length} compared
+								</span>
+							</div>
+
+							{#if comparison.selectedPlaceId && comparison.closestPlaceId && comparison.selectedPlaceId !== comparison.closestPlaceId}
+								<p class="mt-2 text-[11px] font-medium text-amber-700">
+									Route winner differs from the closest place by straight-line distance.
+								</p>
+							{/if}
+
+							<div class="mt-3 flex flex-col gap-2">
+								{#each comparison.comparedPlaces as place (place.id)}
+									<div
+										class="rounded-lg border px-3 py-2 {place.selectedByRoute
+											? 'border-sky-200 bg-sky-50'
+											: place.closestByDistance
+												? 'border-emerald-200 bg-emerald-50'
+												: 'border-border bg-card/70'}"
+									>
+										<div class="flex items-start justify-between gap-3">
+											<div class="min-w-0">
+												<div class="flex flex-wrap items-center gap-1.5">
+													<p class="truncate text-sm font-medium text-foreground">
+														{place.name}
+													</p>
+													{#if place.selectedByRoute}
+														<span class="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-sky-800">
+															Selected
+														</span>
+													{/if}
+													{#if place.closestByDistance}
+														<span class="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-800">
+															Closest
+														</span>
+													{/if}
+												</div>
+												{#if place.address}
+													<p class="truncate text-[11px] text-muted-foreground">
+														{place.address}
+													</p>
+												{/if}
+											</div>
+											<div class="shrink-0 text-right">
+												<p class="text-sm font-semibold text-foreground">
+													{formatComparisonDistance(
+														place.straightLineMeters,
+													)}
+												</p>
+												<p class="text-[11px] text-muted-foreground">
+													{formatComparisonMinutes(
+														place.routeMinutes,
+													)}
+												</p>
+											</div>
+										</div>
+									</div>
+								{/each}
+							</div>
+						</div>
+					{/each}
+				</div>
 			</div>
 		{/if}
 

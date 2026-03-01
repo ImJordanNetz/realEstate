@@ -38,6 +38,7 @@
 	import ListingCard, {
 		type ListingCardListing,
 		type ListingHighlight,
+		type ListingPlaceComparison,
 	} from "$lib/components/ListingCard.svelte";
 	import ClarifyingQuestions from "$lib/components/ClarifyingQuestions.svelte";
 	import SearchComposer from "$lib/components/SearchComposer.svelte";
@@ -116,6 +117,19 @@
 		sqft: number | null;
 		placeId: string | null;
 		selectionKey: string;
+	};
+
+	type SearchPlaceComparison = NonNullable<
+		ApartmentSearchResponse["ranked"][number]["place_comparisons"]["commute"]
+	>;
+
+	const PLACE_COMPARISON_SOURCE_ORDER: Record<
+		ListingPlaceComparison["source"],
+		number
+	> = {
+		constraint: 0,
+		amenity: 1,
+		commute: 2,
 	};
 
 	function handleRevisionSubmit(nextPrompt: string) {
@@ -380,6 +394,63 @@
 		return { text, status: criterion.status };
 	}
 
+	function mapPlaceComparison(
+		comparison: SearchPlaceComparison,
+		source: ListingPlaceComparison["source"],
+	): ListingPlaceComparison {
+		return {
+			key: comparison.key,
+			label: comparison.label,
+			query: comparison.query,
+			travelMode: comparison.travel_mode,
+			source,
+			selectedPlaceId: comparison.selected_place_id,
+			closestPlaceId: comparison.closest_place_id,
+			comparedPlaces: comparison.compared_places.map((place) => ({
+				id: place.id,
+				name: place.name,
+				address: place.address,
+				straightLineMeters: place.straight_line_meters,
+				routeMinutes: place.route_minutes,
+				selectedByRoute: place.selected_by_route,
+				closestByDistance: place.closest_by_distance,
+			})),
+		};
+	}
+
+	function buildListingPlaceComparisons(
+		hit: ApartmentSearchResponse["ranked"][number],
+	): ListingPlaceComparison[] {
+		const comparisons: ListingPlaceComparison[] = [];
+
+		if (hit.place_comparisons.commute) {
+			comparisons.push(
+				mapPlaceComparison(hit.place_comparisons.commute, "commute"),
+			);
+		}
+
+		for (const comparison of Object.values(hit.place_comparisons.constraints)) {
+			comparisons.push(mapPlaceComparison(comparison, "constraint"));
+		}
+
+		for (const comparison of Object.values(hit.place_comparisons.amenities)) {
+			comparisons.push(mapPlaceComparison(comparison, "amenity"));
+		}
+
+		return comparisons
+			.filter((comparison) => comparison.comparedPlaces.length > 0)
+			.sort((a, b) => {
+				const sourceDelta =
+					PLACE_COMPARISON_SOURCE_ORDER[a.source] -
+					PLACE_COMPARISON_SOURCE_ORDER[b.source];
+				if (sourceDelta !== 0) {
+					return sourceDelta;
+				}
+
+				return a.label.localeCompare(b.label);
+			});
+	}
+
 	let listingCards = $derived.by((): ListingCardListing[] => {
 		if (!searchResult) {
 			const mapped = baseListings.map((listing) => ({
@@ -417,6 +488,7 @@
 				matchScore: hit.total_score,
 				requiredSummary: null,
 				highlights,
+				placeComparisons: buildListingPlaceComparisons(hit),
 				representativePhotos: buildRepresentativePhotoSet(
 					hit.listing.id,
 				),

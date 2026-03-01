@@ -91,6 +91,28 @@ export type RouteMatrixProvider = {
 	computeRouteMatrix(input: RouteMatrixRequest): Promise<RouteMatrixCell[]>;
 };
 
+export type ComparedPlace = {
+	id: string;
+	name: string;
+	address: string | null;
+	types: string[];
+	location: GeoPoint;
+	straight_line_meters: number;
+	route_minutes: number | null;
+	selected_by_route: boolean;
+	closest_by_distance: boolean;
+};
+
+export type PlaceComparison = {
+	key: string;
+	label: string;
+	query: string;
+	travel_mode: TravelMode;
+	selected_place_id: string | null;
+	closest_place_id: string | null;
+	compared_places: ComparedPlace[];
+};
+
 export type ApartmentSearchProviders = {
 	places: PlaceSearchProvider;
 	routes: RouteMatrixProvider;
@@ -108,6 +130,11 @@ export type RankedApartmentSearchHit = {
 	matched_places: {
 		commute: PlaceCandidate | null;
 		constraints: Record<string, PlaceCandidate | null>;
+	};
+	place_comparisons: {
+		commute: PlaceComparison | null;
+		constraints: Record<string, PlaceComparison>;
+		amenities: Record<string, PlaceComparison>;
 	};
 	total_score: number;
 	soft_score: number;
@@ -139,6 +166,8 @@ export type ApartmentSearchOptions = {
 type RouteSummary = {
 	minutesByOriginId: Record<string, number | null>;
 	bestPlaceByOriginId: Record<string, PlaceCandidate | null>;
+	closestPlaceByOriginId: Record<string, PlaceCandidate | null>;
+	comparisonsByOriginId: Record<string, ComparedPlace[]>;
 };
 
 type AmenityLocationPreference = {
@@ -334,34 +363,166 @@ function createMatchedConstraintPlacesStore(listings: ApartmentInventoryListing[
 	return matchedPlacesByListingId;
 }
 
+function createPlaceComparisonsStore(listings: ApartmentInventoryListing[]) {
+	const placeComparisonsByListingId = new Map<string, Record<string, PlaceComparison>>();
+
+	for (const listing of listings) {
+		placeComparisonsByListingId.set(listing.id, {});
+	}
+
+	return placeComparisonsByListingId;
+}
+
+function compareComparedPlaces(a: ComparedPlace, b: ComparedPlace) {
+	if (a.selected_by_route !== b.selected_by_route) {
+		return a.selected_by_route ? -1 : 1;
+	}
+
+	if (a.closest_by_distance !== b.closest_by_distance) {
+		return a.closest_by_distance ? -1 : 1;
+	}
+
+	const aRouteMinutes = a.route_minutes;
+	const bRouteMinutes = b.route_minutes;
+
+	if (aRouteMinutes != null && bRouteMinutes != null && aRouteMinutes !== bRouteMinutes) {
+		return aRouteMinutes - bRouteMinutes;
+	}
+
+	if (aRouteMinutes == null && bRouteMinutes != null) {
+		return 1;
+	}
+
+	if (aRouteMinutes != null && bRouteMinutes == null) {
+		return -1;
+	}
+
+	if (a.straight_line_meters !== b.straight_line_meters) {
+		return a.straight_line_meters - b.straight_line_meters;
+	}
+
+	return a.name.localeCompare(b.name);
+}
+
 function summarizeRoutes(
+	listings: ApartmentInventoryListing[],
 	places: PlaceCandidate[],
 	cells: RouteMatrixCell[],
 	originIds: string[]
 ): RouteSummary {
 	const bestPlaceByOriginId: Record<string, PlaceCandidate | null> = {};
 	const minutesByOriginId: Record<string, number | null> = {};
+	const closestPlaceByOriginId: Record<string, PlaceCandidate | null> = {};
+	const comparisonsByOriginId: Record<string, ComparedPlace[]> = {};
+	const listingById = new Map(listings.map((listing) => [listing.id, listing]));
 	const placeById = new Map(places.map((place) => [place.id, place]));
+	const routeMinutesByOriginId = new Map<string, Map<string, number | null>>();
 
 	for (const originId of originIds) {
 		bestPlaceByOriginId[originId] = null;
 		minutesByOriginId[originId] = null;
+		closestPlaceByOriginId[originId] = null;
+		comparisonsByOriginId[originId] = [];
 	}
 
 	for (const cell of cells) {
-		if (!(cell.origin_id in minutesByOriginId) || cell.minutes == null) {
+		if (!(cell.origin_id in minutesByOriginId)) {
 			continue;
 		}
 
-		const current = minutesByOriginId[cell.origin_id];
-
-		if (current == null || cell.minutes < current) {
-			minutesByOriginId[cell.origin_id] = cell.minutes;
-			bestPlaceByOriginId[cell.origin_id] = placeById.get(cell.destination_id) ?? null;
+		let destinationMinutes = routeMinutesByOriginId.get(cell.origin_id);
+		if (!destinationMinutes) {
+			destinationMinutes = new Map<string, number | null>();
+			routeMinutesByOriginId.set(cell.origin_id, destinationMinutes);
 		}
+
+		destinationMinutes.set(cell.destination_id, cell.minutes);
 	}
 
-	return { bestPlaceByOriginId, minutesByOriginId };
+	for (const originId of originIds) {
+		const listing = listingById.get(originId);
+		if (!listing) {
+			continue;
+		}
+
+		const destinationMinutes = routeMinutesByOriginId.get(originId) ?? new Map<string, number | null>();
+		let bestRouteMinutes = Number.POSITIVE_INFINITY;
+		let bestRoutePlaceId: string | null = null;
+		let bestDistanceMeters = Number.POSITIVE_INFINITY;
+		let closestPlaceId: string | null = null;
+
+		const comparedPlaces = places.map((place) => {
+			const straightLineMeters = Math.round(
+				haversineDistanceMeters(listing.location, place.location)
+			);
+			const routeMinutes = destinationMinutes.get(place.id) ?? null;
+
+			if (routeMinutes != null && routeMinutes < bestRouteMinutes) {
+				bestRouteMinutes = routeMinutes;
+				bestRoutePlaceId = place.id;
+			}
+
+			if (straightLineMeters < bestDistanceMeters) {
+				bestDistanceMeters = straightLineMeters;
+				closestPlaceId = place.id;
+			}
+
+			return {
+				id: place.id,
+				name: place.name,
+				address: place.address,
+				types: place.types,
+				location: place.location,
+				straight_line_meters: straightLineMeters,
+				route_minutes: routeMinutes,
+				selected_by_route: false,
+				closest_by_distance: false
+			} satisfies ComparedPlace;
+		});
+
+		bestPlaceByOriginId[originId] =
+			bestRoutePlaceId == null ? null : placeById.get(bestRoutePlaceId) ?? null;
+		minutesByOriginId[originId] =
+			bestRoutePlaceId == null || !Number.isFinite(bestRouteMinutes)
+				? null
+				: Number(bestRouteMinutes.toFixed(1));
+		closestPlaceByOriginId[originId] =
+			closestPlaceId == null ? null : placeById.get(closestPlaceId) ?? null;
+		comparisonsByOriginId[originId] = comparedPlaces
+			.map((place) => ({
+				...place,
+				selected_by_route: place.id === bestRoutePlaceId,
+				closest_by_distance: place.id === closestPlaceId
+			}))
+			.sort(compareComparedPlaces);
+	}
+
+	return {
+		bestPlaceByOriginId,
+		minutesByOriginId,
+		closestPlaceByOriginId,
+		comparisonsByOriginId
+	};
+}
+
+function createPlaceComparison(params: {
+	key: string;
+	label: string;
+	query: string;
+	travelMode: TravelMode;
+	selectedPlace: PlaceCandidate | null;
+	closestPlace: PlaceCandidate | null;
+	comparedPlaces: ComparedPlace[];
+}) {
+	return {
+		key: params.key,
+		label: params.label,
+		query: params.query,
+		travel_mode: params.travelMode,
+		selected_place_id: params.selectedPlace?.id ?? null,
+		closest_place_id: params.closestPlace?.id ?? null,
+		compared_places: params.comparedPlaces
+	} satisfies PlaceComparison;
 }
 
 function toRankingListing(
@@ -518,7 +679,7 @@ async function computeBestRouteSummary(params: {
 			origins: params.listings.length,
 			reason: 'no_places'
 		});
-		return summarizeRoutes([], [], originIds);
+		return summarizeRoutes(params.listings, [], [], originIds);
 	}
 
 	const startedAt = Date.now();
@@ -564,7 +725,7 @@ async function computeBestRouteSummary(params: {
 		durationMs: Date.now() - startedAt
 	});
 
-	return summarizeRoutes(params.places, cells, originIds);
+	return summarizeRoutes(params.listings, params.places, cells, originIds);
 }
 
 export async function searchApartments(params: {
@@ -690,8 +851,11 @@ export async function searchApartments(params: {
 	const derivedMetricsByListingId = createDerivedMetricsStore(shortlistedListings);
 	const matchedConstraintPlacesByListingId =
 		createMatchedConstraintPlacesStore(shortlistedListings);
+	const constraintComparisonsByListingId = createPlaceComparisonsStore(shortlistedListings);
+	const amenityComparisonsByListingId = createPlaceComparisonsStore(shortlistedListings);
 	const originIds = shortlistedListings.map((listing) => listing.id);
 	let commutePlaceByListingId: Record<string, PlaceCandidate | null> = {};
+	let commuteComparisonByListingId: Record<string, PlaceComparison | null> = {};
 
 	if (nightlifeGrid) {
 		applyNightlifeMetrics({
@@ -720,6 +884,16 @@ export async function searchApartments(params: {
 			if (metrics) {
 				metrics.commute_minutes = routeSummary.minutesByOriginId[listingId] ?? null;
 			}
+
+			commuteComparisonByListingId[listingId] = createPlaceComparison({
+				key: 'commute',
+				label: 'Commute destination',
+				query: preferences.commute.search_query,
+				travelMode: preferences.commute.travel_mode,
+				selectedPlace: routeSummary.bestPlaceByOriginId[listingId] ?? null,
+				closestPlace: routeSummary.closestPlaceByOriginId[listingId] ?? null,
+				comparedPlaces: routeSummary.comparisonsByOriginId[listingId] ?? []
+			});
 		}
 	}
 
@@ -738,6 +912,7 @@ export async function searchApartments(params: {
 		for (const listingId of originIds) {
 			const metrics = derivedMetricsByListingId.get(listingId);
 			const placeMap = matchedConstraintPlacesByListingId.get(listingId);
+			const comparisonMap = constraintComparisonsByListingId.get(listingId);
 
 			if (metrics) {
 				metrics.proximity_minutes[constraintKey] =
@@ -746,6 +921,18 @@ export async function searchApartments(params: {
 
 			if (placeMap) {
 				placeMap[constraintKey] = routeSummary.bestPlaceByOriginId[listingId] ?? null;
+			}
+
+			if (comparisonMap) {
+				comparisonMap[constraintKey] = createPlaceComparison({
+					key: constraintKey,
+					label: constraint.label,
+					query: constraint.search_query,
+					travelMode: constraint.travel_mode,
+					selectedPlace: routeSummary.bestPlaceByOriginId[listingId] ?? null,
+					closestPlace: routeSummary.closestPlaceByOriginId[listingId] ?? null,
+					comparedPlaces: routeSummary.comparisonsByOriginId[listingId] ?? []
+				});
 			}
 		}
 	}
@@ -763,10 +950,23 @@ export async function searchApartments(params: {
 
 		for (const listingId of originIds) {
 			const metrics = derivedMetricsByListingId.get(listingId);
+			const comparisonMap = amenityComparisonsByListingId.get(listingId);
 
 			if (metrics) {
 				metrics.proximity_minutes[amenityLocation.key] =
 					routeSummary.minutesByOriginId[listingId] ?? null;
+			}
+
+			if (comparisonMap) {
+				comparisonMap[amenityLocation.key] = createPlaceComparison({
+					key: amenityLocation.key,
+					label: amenityLocation.name,
+					query: amenityLocation.query,
+					travelMode: amenityLocation.travelMode,
+					selectedPlace: routeSummary.bestPlaceByOriginId[listingId] ?? null,
+					closestPlace: routeSummary.closestPlaceByOriginId[listingId] ?? null,
+					comparedPlaces: routeSummary.comparisonsByOriginId[listingId] ?? []
+				});
 			}
 		}
 	}
@@ -802,6 +1002,11 @@ export async function searchApartments(params: {
 				matched_places: {
 					commute: commutePlaceByListingId[item.listing.id] ?? null,
 					constraints: matchedConstraintPlacesByListingId.get(item.listing.id) ?? {}
+				},
+				place_comparisons: {
+					commute: commuteComparisonByListingId[item.listing.id] ?? null,
+					constraints: constraintComparisonsByListingId.get(item.listing.id) ?? {},
+					amenities: amenityComparisonsByListingId.get(item.listing.id) ?? {}
 				},
 				total_score: item.total_score,
 				soft_score: item.soft_score,
