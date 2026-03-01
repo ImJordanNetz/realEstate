@@ -75,8 +75,6 @@
 		googleMapsUri: string | null;
 	};
 
-	const SHOW_PLACE_COMPARISONS = false;
-
 	let {
 		listing,
 		isFavorited = false,
@@ -227,13 +225,13 @@
 		? 'border-primary ring-2 ring-primary/20'
 		: 'border-border'} {!selected && onclick
 		? 'cursor-pointer'
-		: ''} {selected ? 'flex-col' : 'flex-row'}"
+		: ''} {selected ? 'flex-col' : 'min-h-[10.5rem] flex-row'}"
 	{onclick}
 >
 	<div
 		class="relative shrink-0 overflow-hidden bg-gradient-to-br from-muted to-muted/60 {selected
 			? 'aspect-[16/7] w-full'
-			: 'w-28 self-stretch'}"
+			: 'w-36 self-stretch'}"
 	>
 		{#if showRepresentativeCarousel}
 			<Carousel
@@ -335,7 +333,7 @@
 	<div
 		class="flex min-w-0 shrink-0 flex-col p-2 {selected
 			? 'min-h-0 gap-3 overflow-y-auto p-5'
-			: 'flex-1 gap-1.5'}"
+			: 'flex-1 gap-2 p-3'}"
 	>
 		<div class="flex items-center justify-between">
 			<p
@@ -491,7 +489,7 @@
 			</div>
 		{/if}
 
-		{#if SHOW_PLACE_COMPARISONS && selected && listing.placeComparisons?.length}
+		{#if selected && listing.placeComparisons?.length}
 			<div class="rounded-2xl border border-sky-200/80 bg-sky-50/70 p-3">
 				<div class="flex items-center justify-between gap-3">
 					<div>
