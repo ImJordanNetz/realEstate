@@ -92,6 +92,8 @@ const DEFAULT_TRAVEL_TARGETS: Record<'walk' | 'bike' | 'drive' | 'transit', numb
 	drive: 20,
 	transit: 30
 };
+const DEFAULT_AMENITY_LOCATION_TARGET_MINUTES = 12;
+const AMENITY_LOCATION_SCORE_CAP = 0.85;
 
 function clamp(value: number, min = 0, max = 1) {
 	return Math.min(max, Math.max(min, value));
@@ -99,6 +101,26 @@ function clamp(value: number, min = 0, max = 1) {
 
 function normalizeText(value: string) {
 	return value.trim().toLowerCase();
+}
+
+export function normalizePreferenceText(value: string) {
+	return normalizeText(value)
+		.replace(/&/g, ' and ')
+		.replace(/[^a-z0-9]+/g, ' ')
+		.split(' ')
+		.filter(Boolean)
+		.map((token) => {
+			if (token.endsWith('ies') && token.length > 3) {
+				return `${token.slice(0, -3)}y`;
+			}
+
+			if (token.endsWith('s') && token.length > 3) {
+				return token.slice(0, -1);
+			}
+
+			return token;
+		})
+		.join(' ');
 }
 
 function toCriterionKey(value: string) {
@@ -538,14 +560,46 @@ function buildAmenityCriterion(
 	weight: number
 ): CriterionDefinition {
 	const normalizedName = normalizeText(name);
+	const amenityLocationKey = buildAmenityLocationKey(name);
 
 	return {
 		key: `amenity:${toCriterionKey(name)}`,
 		label: `Amenity: ${name}`,
 		required,
 		weight,
-		evaluate: (listing) => {
+		evaluate: (listing, unknownScore) => {
 			const hasAmenity = listing.amenities.some((amenity) => normalizeText(amenity) === normalizedName);
+
+			if (!hasAmenity && Object.hasOwn(listing.proximity_minutes, amenityLocationKey)) {
+				const nearbyMinutes = listing.proximity_minutes[amenityLocationKey] ?? null;
+				const nearbyScore = clamp(
+					scorePreferredTravelTime(
+						nearbyMinutes,
+						DEFAULT_AMENITY_LOCATION_TARGET_MINUTES,
+						unknownScore
+					) * AMENITY_LOCATION_SCORE_CAP
+				);
+
+				return buildCriterionResult({
+					key: `amenity:${toCriterionKey(name)}`,
+					label: `Amenity: ${name}`,
+					required,
+					weight,
+					score: nearbyScore,
+					status:
+						nearbyMinutes == null
+							? 'unknown'
+							: !required && nearbyScore >= 0.7
+								? 'pass'
+								: 'fail',
+					reason:
+						nearbyMinutes == null
+							? `The listing does not include this amenity, and nearby ${name} travel time is missing.`
+							: `The listing does not include this amenity, but a nearby ${name} is ${formatMinutes(nearbyMinutes)} away.`,
+					actual: nearbyMinutes,
+					target: `on-site or within ~${DEFAULT_AMENITY_LOCATION_TARGET_MINUTES} min walk`
+				});
+			}
 
 			return buildCriterionResult({
 				key: `amenity:${toCriterionKey(name)}`,
@@ -564,10 +618,28 @@ function buildAmenityCriterion(
 	};
 }
 
+export function buildAmenityLocationKey(name: string) {
+	return `amenity-location:${toCriterionKey(name)}`;
+}
+
 function buildConstraintKey(
 	constraint: ApartmentPreferences['constraints'][number]
 ) {
 	return toCriterionKey(`${constraint.label}-${constraint.search_query}-${constraint.travel_mode}`);
+}
+
+export function isAmenityCoveredByConstraint(
+	amenityName: string,
+	constraints: ApartmentPreferences['constraints']
+) {
+	const normalizedAmenity = normalizePreferenceText(amenityName);
+
+	return constraints.some((constraint) => {
+		const normalizedLabel = normalizePreferenceText(constraint.label);
+		const normalizedQuery = normalizePreferenceText(constraint.search_query);
+
+		return normalizedAmenity === normalizedLabel || normalizedAmenity === normalizedQuery;
+	});
 }
 
 function compileCriteria(
@@ -853,6 +925,10 @@ function compileCriteria(
 	}
 
 	for (const amenity of unitRequirements.amenities ?? []) {
+		if (isAmenityCoveredByConstraint(amenity.name, preferences.constraints)) {
+			continue;
+		}
+
 		criteria.push(buildAmenityCriterion(amenity.name, amenity.is_dealbreaker, amenity.importance * TIER_LIFESTYLE));
 	}
 

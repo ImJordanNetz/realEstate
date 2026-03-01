@@ -16,9 +16,16 @@ import type { ApartmentPreferences } from '../src/lib/server/apartment-preferenc
 import { buildNightlifeGrid, type NightlifeGrid } from '../src/lib/server/nightlife-grid';
 
 class StubPlacesProvider implements PlaceSearchProvider {
+	public readonly calls: Array<{ query: string; searchType: string }> = [];
+
 	constructor(private readonly responses: Record<string, PlaceCandidate[]>) {}
 
 	async search(input: { query: string; searchType: string }) {
+		this.calls.push({
+			query: input.query,
+			searchType: input.searchType
+		});
+
 		return this.responses[this.toKey(input.searchType, input.query)] ?? [];
 	}
 
@@ -130,6 +137,36 @@ function createNightlifeProfile(preference: 'quiet' | 'lively') {
 		unit_requirements: null,
 		raw_input:
 			preference === 'quiet' ? 'I want quiet nights' : 'I want lively nightlife nearby'
+	} satisfies ApartmentPreferences;
+}
+
+function createAmenityLocationProfile() {
+	return {
+		budget: {
+			max_rent: null,
+			ideal_rent: null
+		},
+		nightlife: null,
+		commute: null,
+		constraints: [],
+		unit_requirements: {
+			bedrooms: null,
+			bathrooms: null,
+			pets: null,
+			parking: null,
+			laundry: null,
+			furnished: null,
+			sqft: null,
+			lease_length_months: null,
+			amenities: [
+				{
+					name: 'gym',
+					is_dealbreaker: false,
+					importance: 0.8
+				}
+			]
+		},
+		raw_input: 'I want a gym nearby'
 	} satisfies ApartmentPreferences;
 }
 
@@ -471,6 +508,99 @@ test('searchApartments only routes a shortlist of top candidates', async () => {
 		new Set(['alpha', 'beta'])
 	);
 	assert.ok(routes.calls.every((call) => call.originIds.length <= 2));
+});
+
+test('searchApartments ranks location-like amenities by nearby travel time', async () => {
+	const preferences = createAmenityLocationProfile();
+	const listings = [
+		createListing('alpha', { location: { lat: 33.6802, lng: -117.8202 } }),
+		createListing('beta', { location: { lat: 33.705, lng: -117.79 } })
+	];
+	const places = new StubPlacesProvider({
+		'category:gym': [
+			{
+				id: 'gym-1',
+				name: 'Gym One',
+				location: { lat: 33.681, lng: -117.8201 },
+				address: 'Irvine, CA',
+				types: ['gym']
+			}
+		]
+	});
+	const routes = new StubRoutesProvider({
+		walk: {
+			alpha: { 'gym-1': 4 },
+			beta: { 'gym-1': 13 }
+		}
+	});
+
+	const result = await searchApartments({
+		preferences,
+		listings,
+		providers: { places, routes }
+	});
+
+	const amenityCriterionAlpha = result.ranked[0]?.criteria.find(
+		(criterion) => criterion.label === 'Amenity: gym'
+	);
+	const amenityCriterionBeta = result.ranked[1]?.criteria.find(
+		(criterion) => criterion.label === 'Amenity: gym'
+	);
+
+	assert.equal(result.mode, 'strict');
+	assert.equal(result.ranked[0]?.listing.id, 'alpha');
+	assert.equal(result.ranked[1]?.listing.id, 'beta');
+	assert.equal(amenityCriterionAlpha?.actual, 4);
+	assert.equal(amenityCriterionBeta?.actual, 13);
+	assert.ok((amenityCriterionAlpha?.score ?? 0) > (amenityCriterionBeta?.score ?? 0));
+	assert.deepEqual(
+		places.calls.map((call) => `${call.searchType}:${call.query.toLowerCase()}`),
+		['category:gym']
+	);
+});
+
+test('searchApartments does not double-count amenity locations that already exist as needs', async () => {
+	const preferences = {
+		...createAmenityLocationProfile(),
+		constraints: [
+			{
+				label: 'Nearby gym',
+				search_query: 'gym',
+				search_type: 'category',
+				travel_mode: 'walk',
+				max_minutes: 10,
+				is_dealbreaker: false,
+				importance: 0.9
+			}
+		]
+	} satisfies ApartmentPreferences;
+	const listings = [createListing('alpha', { location: { lat: 33.6802, lng: -117.8202 } })];
+	const places = new StubPlacesProvider({
+		'category:gym': [
+			{
+				id: 'gym-1',
+				name: 'Gym One',
+				location: { lat: 33.681, lng: -117.8201 },
+				address: 'Irvine, CA',
+				types: ['gym']
+			}
+		]
+	});
+	const routes = new StubRoutesProvider({
+		walk: {
+			alpha: { 'gym-1': 4 }
+		}
+	});
+
+	const result = await searchApartments({
+		preferences,
+		listings,
+		providers: { places, routes }
+	});
+
+	assert.equal(result.ranked[0]?.criteria.filter((criterion) => criterion.label === 'Amenity: gym').length, 0);
+	assert.equal(places.calls.length, 1);
+	assert.equal(routes.calls.length, 1);
 });
 
 test('searchApartments ranks quieter cells higher when the user wants quiet nights', async () => {

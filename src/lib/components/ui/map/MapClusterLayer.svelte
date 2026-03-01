@@ -23,8 +23,13 @@
 			feature: GeoJSON.Feature<GeoJSON.Point, P>,
 			coordinates: [number, number]
 		) => void;
-		/** Callback when a cluster is clicked. If not provided, zooms into the cluster */
-		onclusterclick?: (clusterId: number, coordinates: [number, number], pointCount: number) => void;
+		/** Callback when a cluster is clicked. Return true to suppress the default zoom behavior. */
+		onclusterclick?: (
+			clusterId: number,
+			coordinates: [number, number],
+			pointCount: number,
+			leaves: GeoJSON.Feature<GeoJSON.Point, P>[],
+		) => boolean | void | Promise<boolean | void>;
 	}
 
 	let {
@@ -373,17 +378,24 @@
 			const pointCount = feature.properties?.point_count as number;
 			const coordinates = (feature.geometry as GeoJSON.Point).coordinates as [number, number];
 
-			if (onclusterclick) {
-				onclusterclick(clusterId, coordinates, pointCount);
-			} else {
-				// Default behavior: zoom to cluster expansion zoom
-				const source = map.getSource(sourceId) as MapLibreGL.GeoJSONSource;
-				const zoom = await source.getClusterExpansionZoom(clusterId);
-				map.easeTo({
-					center: coordinates,
-					zoom,
-				});
-			}
+			const source = map.getSource(sourceId) as MapLibreGL.GeoJSONSource;
+			const leaves = (await source.getClusterLeaves(
+				clusterId,
+				pointCount,
+				0,
+			)) as GeoJSON.Feature<GeoJSON.Point, P>[];
+
+			const handled = onclusterclick
+				? await onclusterclick(clusterId, coordinates, pointCount, leaves)
+				: false;
+			if (handled) return;
+
+			// Default behavior: zoom to cluster expansion zoom
+			const zoom = await source.getClusterExpansionZoom(clusterId);
+			map.easeTo({
+				center: coordinates,
+				zoom,
+			});
 		};
 
 		// Unclustered point click handler

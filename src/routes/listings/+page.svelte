@@ -62,6 +62,8 @@
 		"dining",
 		"balcony",
 	] as const;
+	const DEFAULT_VISIBLE_LISTING_LIMIT = 10;
+	const SEARCH_VISIBLE_LISTING_LIMIT = 20;
 
 	let nightlifeGeoJSON = $derived.by(
 		(): GeoJSON.FeatureCollection<GeoJSON.Point> => ({
@@ -105,6 +107,17 @@
 	let bedroomFilter = $state<number | null>(null); // null = Any, 0 = Studio, 1+
 	let revisionQuery = $state("");
 	let revisionController: AbortController | null = null;
+
+	type MapListingFeatureProperties = {
+		id: string;
+		price: number | null;
+		address: string;
+		bedrooms: number | null;
+		bathrooms: number | null;
+		sqft: number | null;
+		placeId: string | null;
+		selectionKey: string;
+	};
 
 	function handleRevisionSubmit(nextPrompt: string) {
 		revisionController?.abort();
@@ -244,7 +257,19 @@
 	}
 
 	function normalizeAddress(address: string): string {
-		return address.replace(/,?\s*#\s*[\w-]+/, "").trim();
+		return address
+			.replace(/,?\s*#\s*[\w-]+/i, "")
+			.replace(/,?\s+apt\.?\s+[\w-]+/i, "")
+			.trim();
+	}
+
+	function getListingSelectionKey(listing: {
+		address: string;
+		placeId?: string | null;
+	}) {
+		const placeId = listing.placeId?.trim();
+		if (placeId) return placeId;
+		return normalizeAddress(listing.address).toLowerCase();
 	}
 
 	function hashString(value: string) {
@@ -370,7 +395,10 @@
 				price: listing.price,
 				representativePhotos: buildRepresentativePhotoSet(listing.id),
 			}));
-			return sortFavoritesFirst(dedupeListings(mapped)).slice(0, 10);
+			return sortFavoritesFirst(dedupeListings(mapped)).slice(
+				0,
+				DEFAULT_VISIBLE_LISTING_LIMIT,
+			);
 		}
 
 		const mapped = searchResult.ranked.map((hit) => {
@@ -415,6 +443,12 @@
 		return filtered;
 	}
 
+	function getVisibleListingLimit() {
+		return searchResult
+			? SEARCH_VISIBLE_LISTING_LIMIT
+			: DEFAULT_VISIBLE_LISTING_LIMIT;
+	}
+
 	let priceRange = $derived.by(() => {
 		const prices = listingCards.map((l) => l.price).filter((p): p is number => p != null);
 		if (prices.length === 0) return { min: 0, max: 10000 };
@@ -429,7 +463,9 @@
 		return [...set].sort((a, b) => a - b);
 	});
 
-	let displayedListingCards = $derived(applyFilters(listingCards));
+	let displayedListingCards = $derived.by(() =>
+		applyFilters(listingCards).slice(0, getVisibleListingLimit()),
+	);
 
 	function toggleListingFavorite(listingId: string) {
 		favoriteListingIdsStore.update((ids) =>
@@ -447,6 +483,7 @@
 		return searchResult.ranked.map((hit) => ({
 			id: hit.listing.id,
 			address: hit.listing.address,
+			placeId: hit.listing.place_id,
 			lat: hit.listing.location.lat,
 			lng: hit.listing.location.lng,
 			bedrooms: hit.listing.bedrooms,
@@ -456,7 +493,22 @@
 		}));
 	});
 
-	let displayedListings = $derived(applyFilters(listings));
+	let displayedListings = $derived.by(() =>
+		applyFilters(listings).slice(0, getVisibleListingLimit()),
+	);
+	let displayedListingCardIds = $derived(
+		new Set(displayedListingCards.map((listing) => listing.id)),
+	);
+	let displayedListingCardIdBySelectionKey = $derived.by(() => {
+		const ids = new globalThis.Map<string, string>();
+		for (const listing of displayedListingCards) {
+			const key = getListingSelectionKey(listing);
+			if (!ids.has(key)) {
+				ids.set(key, listing.id);
+			}
+		}
+		return ids;
+	});
 
 	let completedProfile = $derived.by(() => {
 		if (!result) return null;
@@ -503,7 +555,7 @@
 	});
 
 	let listingsGeoJSON = $derived.by(
-		(): GeoJSON.FeatureCollection<GeoJSON.Point> => ({
+		(): GeoJSON.FeatureCollection<GeoJSON.Point, MapListingFeatureProperties> => ({
 			type: "FeatureCollection",
 			features: displayedListings.map((l) => ({
 				type: "Feature" as const,
@@ -518,6 +570,8 @@
 					bedrooms: l.bedrooms,
 					bathrooms: l.bathrooms,
 					sqft: l.sqft,
+					placeId: l.placeId ?? null,
+					selectionKey: getListingSelectionKey(l),
 				},
 			})),
 		}),
@@ -821,12 +875,88 @@
 	}
 
 	function handleMapPointClick(
-		feature: GeoJSON.Feature<GeoJSON.Point>,
+		feature: GeoJSON.Feature<GeoJSON.Point, MapListingFeatureProperties>,
 		_coordinates: [number, number],
 	) {
-		const id = feature.properties?.id as string | undefined;
+		const id = resolveListingCardId(feature.properties);
 		if (!id) return;
 		void selectListing(id, { scrollIntoView: true, behavior: "smooth" });
+	}
+
+	function resolveListingCardId(
+		properties: Partial<MapListingFeatureProperties> | null | undefined,
+	) {
+		if (!properties) return null;
+
+		const id = typeof properties.id === "string" ? properties.id : null;
+		if (id && displayedListingCardIds.has(id)) {
+			return id;
+		}
+
+		const selectionKey =
+			typeof properties.selectionKey === "string"
+				? properties.selectionKey
+				: getListingSelectionKey({
+						address: typeof properties.address === "string" ? properties.address : "",
+						placeId:
+							typeof properties.placeId === "string"
+								? properties.placeId
+								: null,
+					});
+
+		return displayedListingCardIdBySelectionKey.get(selectionKey) ?? null;
+	}
+
+	function resolveListingSelectionKey(
+		properties: Partial<MapListingFeatureProperties> | null | undefined,
+	) {
+		if (!properties) return null;
+
+		if (typeof properties.selectionKey === "string") {
+			return properties.selectionKey;
+		}
+
+		return getListingSelectionKey({
+			address: typeof properties.address === "string" ? properties.address : "",
+			placeId:
+				typeof properties.placeId === "string" ? properties.placeId : null,
+		});
+	}
+
+	async function handleMapClusterClick(
+		_clusterId: number,
+		_coordinates: [number, number],
+		_pointCount: number,
+		leaves: GeoJSON.Feature<GeoJSON.Point, MapListingFeatureProperties>[],
+	) {
+		const matchingSelectionKeys = new Set<string>();
+		let fallbackListingId: string | null = null;
+
+		for (const leaf of leaves) {
+			const selectionKey = resolveListingSelectionKey(leaf.properties);
+			const id = resolveListingCardId(leaf.properties);
+			if (selectionKey && displayedListingCardIdBySelectionKey.has(selectionKey)) {
+				matchingSelectionKeys.add(selectionKey);
+			}
+			if (!fallbackListingId && id) {
+				fallbackListingId = id;
+			}
+			if (matchingSelectionKeys.size > 1) {
+				return false;
+			}
+		}
+
+		const [selectionKey] = matchingSelectionKeys;
+		const listingId = selectionKey
+			? (displayedListingCardIdBySelectionKey.get(selectionKey) ?? null)
+			: fallbackListingId;
+		if (!listingId) return false;
+
+		await selectListing(listingId, {
+			scrollIntoView: true,
+			behavior: "smooth",
+		});
+		return true;
 	}
 
 	// --- Route polylines on selected listing ---
@@ -1122,6 +1252,7 @@
 				clusterColors={["#6d28d9", "#7c3aed", "#8b5cf6"]}
 				pointColor="#6d28d9"
 				selectedPointId={selectedListingId}
+				onclusterclick={handleMapClusterClick}
 				onpointclick={handleMapPointClick}
 			/>
 			<MapPOILayer pois={filteredPOIs} />
@@ -1332,11 +1463,12 @@
 										</p>
 									{:else if searchResult}
 										<p class="mt-1 text-xs text-muted-foreground">
-											{searchResult.ranked.length} listings ranked
+											{displayedListingCards.length} of {searchResult.ranked.length}
+											listings shown
 										</p>
 									{:else}
 										<p class="mt-1 text-xs text-muted-foreground">
-											{Math.min(10, listings.length)} of {listings.length}
+											{Math.min(DEFAULT_VISIBLE_LISTING_LIMIT, listings.length)} of {listings.length}
 											listings
 										</p>
 									{/if}

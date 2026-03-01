@@ -40,13 +40,26 @@ const coerceBool = z.preprocess((v) => {
 	return v;
 }, z.boolean());
 
-/** Coerce stringified numbers from LLM output into real numbers. */
-const coerceNum = z.preprocess(
-	(v) => (typeof v === 'string' && v.trim() !== '' ? Number(v) : v),
-	z.number()
-);
+/** Coerce stringified numbers from LLM output. NaN and non-numeric strings → null. */
+function coerceToNumber(v: unknown): unknown {
+	if (typeof v === 'string') {
+		const trimmed = v.trim();
+		if (trimmed === '') return null;
+		const n = Number(trimmed);
+		return Number.isNaN(n) ? null : n;
+	}
+	if (typeof v === 'number' && Number.isNaN(v)) return null;
+	return v;
+}
 
-const importanceSchema = coerceNum.pipe(z.number().min(0).max(1));
+/** Nullable number — accepts strings, NaN, null, undefined. Used for most numeric fields. */
+const coerceNumNullable = z.preprocess(coerceToNumber, z.number().nullable());
+
+
+const importanceSchema = z.preprocess(coerceToNumber, z.number().nullable()).transform((v) => {
+	const n = v ?? 0;
+	return Math.max(0, Math.min(1, n));
+});
 const clarificationResponseTypeSchema = z.enum(['boolean', 'number', 'single_select']);
 const NIGHTLIFE_ALIASES: Record<string, string> = {
 	loud: 'lively',
@@ -69,21 +82,21 @@ const proximityConstraintSchema = z.object({
 	search_query: z.string(),
 	search_type: searchTypeSchema,
 	travel_mode: travelModeSchema,
-	max_minutes: coerceNum.pipe(z.number().positive()).nullable(),
+	max_minutes: coerceNumNullable,
 	is_dealbreaker: coerceBool,
 	importance: importanceSchema
 });
 
 const nullableIntegerRangeSchema = z.object({
-	min: coerceNum.pipe(z.number().int()).nullable(),
-	max: coerceNum.pipe(z.number().int()).nullable(),
+	min: coerceNumNullable,
+	max: coerceNumNullable,
 	is_dealbreaker: coerceBool,
 	importance: importanceSchema
 });
 
 const nullableNumberRangeSchema = z.object({
-	min: coerceNum.pipe(z.number().positive()).nullable(),
-	max: coerceNum.pipe(z.number().positive()).nullable(),
+	min: coerceNumNullable,
+	max: coerceNumNullable,
 	is_dealbreaker: coerceBool,
 	importance: importanceSchema
 });
@@ -91,7 +104,7 @@ const nullableNumberRangeSchema = z.object({
 export const clarificationAnswerSchema = z.object({
 	id: z.string(),
 	boolean_value: coerceBool.nullable().optional(),
-	number_value: coerceNum.nullable().optional(),
+	number_value: coerceNumNullable.optional(),
 	string_value: z.string().trim().min(1).nullable().optional()
 });
 
@@ -119,8 +132,8 @@ export const apartmentPreferenceMessageSchema = z.object({
 
 export const apartmentPreferenceSchema = z.object({
 	budget: z.object({
-		max_rent: coerceNum.pipe(z.number().positive()).nullable(),
-		ideal_rent: coerceNum.pipe(z.number().positive()).nullable()
+		max_rent: coerceNumNullable,
+		ideal_rent: coerceNumNullable
 	}),
 	nightlife: z
 		.object({
@@ -133,7 +146,7 @@ export const apartmentPreferenceSchema = z.object({
 		.object({
 			search_query: z.string(),
 			travel_mode: travelModeSchema,
-			max_minutes: coerceNum.pipe(z.number().positive()).nullable(),
+			max_minutes: coerceNumNullable,
 			is_dealbreaker: coerceBool,
 			importance: importanceSchema
 		})
@@ -144,7 +157,7 @@ export const apartmentPreferenceSchema = z.object({
 			bedrooms: nullableIntegerRangeSchema.nullable(),
 			bathrooms: z
 				.object({
-					min: coerceNum.pipe(z.number().positive()).nullable(),
+					min: coerceNumNullable,
 					is_dealbreaker: coerceBool,
 					importance: importanceSchema
 				})
@@ -195,8 +208,8 @@ export const apartmentPreferenceSchema = z.object({
 			sqft: nullableNumberRangeSchema.nullable(),
 			lease_length_months: z
 				.object({
-					min: coerceNum.pipe(z.number().int().positive()).nullable(),
-					max: coerceNum.pipe(z.number().int().positive()).nullable(),
+					min: coerceNumNullable,
+					max: coerceNumNullable,
 					is_dealbreaker: coerceBool,
 					importance: importanceSchema
 				})

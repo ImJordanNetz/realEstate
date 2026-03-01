@@ -7,7 +7,10 @@ import {
 	type NightlifeGrid
 } from '$lib/server/nightlife-grid';
 import {
+	buildAmenityLocationKey,
 	buildApartmentConstraintKey,
+	isAmenityCoveredByConstraint,
+	normalizePreferenceText,
 	rankApartments,
 	type ApartmentRankingOptions,
 	type ApartmentListingCandidate,
@@ -138,8 +141,22 @@ type RouteSummary = {
 	bestPlaceByOriginId: Record<string, PlaceCandidate | null>;
 };
 
+type AmenityLocationPreference = {
+	name: string;
+	query: string;
+	searchType: SearchType;
+	travelMode: TravelMode;
+	key: string;
+};
+
 const EARTH_RADIUS_METERS = 6_371_000;
 const DEFAULT_SHORTLIST_COUNT = 48;
+const LOCATION_AMENITY_PATTERNS = [
+	/\b(gym|fitness|yoga|pilates|climbing|grocery|supermarket|market|store|coffee|cafe|restaurant|bar|brewery|park|trail|beach|library|station|transit|mall|shopping|dog park|playground|pickleball|tennis|basketball)\b/
+];
+const ON_SITE_AMENITY_PATTERNS = [
+	/\b(pool|hot tub|spa|sauna|laundry|washer|dryer|dishwasher|parking|garage|balcony|patio|terrace|rooftop|furnished|elevator|concierge|doorman|clubhouse|air conditioning|storage|fireplace|hardwood)\b/
+];
 
 function toRadians(value: number) {
 	return (value * Math.PI) / 180;
@@ -171,6 +188,53 @@ function estimateTravelMinutes(distanceMeters: number, travelMode: TravelMode) {
 		case 'transit':
 			return (distanceKilometers / 20) * 60 * 1.6 + 8;
 	}
+}
+
+function isLocationBasedAmenity(name: string) {
+	const normalized = normalizePreferenceText(name);
+
+	if (!normalized) {
+		return false;
+	}
+
+	if (ON_SITE_AMENITY_PATTERNS.some((pattern) => pattern.test(normalized))) {
+		return false;
+	}
+
+	return LOCATION_AMENITY_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function deriveAmenityLocationPreferences(preferences: ApartmentPreferences) {
+	const amenityPreferences = preferences.unit_requirements?.amenities ?? [];
+	const amenityLocations: AmenityLocationPreference[] = [];
+	const seenKeys = new Set<string>();
+
+	for (const amenity of amenityPreferences) {
+		if (!isLocationBasedAmenity(amenity.name)) {
+			continue;
+		}
+
+		if (isAmenityCoveredByConstraint(amenity.name, preferences.constraints)) {
+			continue;
+		}
+
+		const key = buildAmenityLocationKey(amenity.name);
+
+		if (seenKeys.has(key)) {
+			continue;
+		}
+
+		seenKeys.add(key);
+		amenityLocations.push({
+			name: amenity.name,
+			query: amenity.name,
+			searchType: 'category',
+			travelMode: 'walk',
+			key
+		});
+	}
+
+	return amenityLocations;
 }
 
 export function buildSearchRegion(
@@ -357,6 +421,8 @@ function selectShortlistedListings(params: {
 	listings: ApartmentInventoryListing[];
 	commutePlaces: PlaceCandidate[];
 	constraintPlacesByKey: Map<string, PlaceCandidate[]>;
+	amenityLocationPreferences: AmenityLocationPreference[];
+	amenityPlacesByKey: Map<string, PlaceCandidate[]>;
 	nightlifeGrid: NightlifeGrid | null;
 	options: ApartmentSearchOptions;
 }) {
@@ -391,6 +457,14 @@ function selectShortlistedListings(params: {
 				listing,
 				params.constraintPlacesByKey.get(constraintKey) ?? [],
 				constraint.travel_mode
+			);
+		}
+
+		for (const amenityLocation of params.amenityLocationPreferences) {
+			metrics.proximity_minutes[amenityLocation.key] = estimateBestMinutesForPlaces(
+				listing,
+				params.amenityPlacesByKey.get(amenityLocation.key) ?? [],
+				amenityLocation.travelMode
 			);
 		}
 	}
@@ -496,11 +570,14 @@ export async function searchApartments(params: {
 	const placeResultLimit = options.maxPlaceResults ?? 8;
 	const commuteResultLimit = options.commutePlaceResults ?? 1;
 	const constraintPlacesByKey = new Map<string, PlaceCandidate[]>();
+	const amenityLocationPreferences = deriveAmenityLocationPreferences(preferences);
+	const amenityPlacesByKey = new Map<string, PlaceCandidate[]>();
 
 	log('search', 'start', {
 		totalListings: listings.length,
 		hasCommute: !!preferences.commute,
 		constraints: preferences.constraints.length,
+		locationAmenities: amenityLocationPreferences.length,
 		maxPlaceResults: placeResultLimit,
 		commutePlaceResults: commuteResultLimit,
 		shortlistCount: options.shortlistCount ?? DEFAULT_SHORTLIST_COUNT
@@ -546,6 +623,24 @@ export async function searchApartments(params: {
 		})
 	);
 
+	await Promise.all(
+		amenityLocationPreferences.map(async (amenityLocation) => {
+			const places = await providers.places.search({
+				query: amenityLocation.query,
+				searchType: amenityLocation.searchType,
+				region: searchRegion,
+				maxResults: placeResultLimit
+			});
+			amenityPlacesByKey.set(amenityLocation.key, places);
+			log('search', 'amenity_places_ready', {
+				label: amenityLocation.name,
+				query: amenityLocation.query,
+				travelMode: amenityLocation.travelMode,
+				places: places.length
+			});
+		})
+	);
+
 	let nightlifeGrid: NightlifeGrid | null = null;
 
 	if (preferences.nightlife) {
@@ -570,6 +665,8 @@ export async function searchApartments(params: {
 		listings,
 		commutePlaces,
 		constraintPlacesByKey,
+		amenityLocationPreferences,
+		amenityPlacesByKey,
 		nightlifeGrid,
 		options
 	});
@@ -637,6 +734,27 @@ export async function searchApartments(params: {
 
 			if (placeMap) {
 				placeMap[constraintKey] = routeSummary.bestPlaceByOriginId[listingId] ?? null;
+			}
+		}
+	}
+
+	for (const amenityLocation of amenityLocationPreferences) {
+		const routeSummary = await computeBestRouteSummary({
+			listings: shortlistedListings,
+			places: amenityPlacesByKey.get(amenityLocation.key) ?? [],
+			travelMode: amenityLocation.travelMode,
+			routes: providers.routes,
+			departureTime: options.departureTime,
+			logger: log,
+			label: `Amenity: ${amenityLocation.name}`
+		});
+
+		for (const listingId of originIds) {
+			const metrics = derivedMetricsByListingId.get(listingId);
+
+			if (metrics) {
+				metrics.proximity_minutes[amenityLocation.key] =
+					routeSummary.minutesByOriginId[listingId] ?? null;
 			}
 		}
 	}

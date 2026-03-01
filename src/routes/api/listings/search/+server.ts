@@ -10,6 +10,8 @@ const apartmentSearchRequestSchema = z.object({
 	preferences: apartmentPreferenceLenientSchema
 });
 
+const SEARCH_RESULT_BUFFER_SIZE = 48;
+
 export const POST: RequestHandler = async ({ request }) => {
 	const requestId = crypto.randomUUID().slice(0, 8);
 	const startedAt = Date.now();
@@ -56,6 +58,11 @@ export const POST: RequestHandler = async ({ request }) => {
 			preferences: parsed.data.preferences,
 			listings,
 			providers: createGoogleMapsProviders(log),
+			options: {
+				ranking: {
+					maxResults: SEARCH_RESULT_BUFFER_SIZE
+				}
+			},
 			logger: log
 		});
 		log('api', 'request_complete', {
