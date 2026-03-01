@@ -34,6 +34,8 @@
 	import ClarifyingQuestions from "$lib/components/ClarifyingQuestions.svelte";
 	import GridSpinner from "$lib/components/ui/GridSpinner.svelte";
 	import { Skeleton } from "$lib/components/ui/skeleton";
+	import { LocalStore } from "$lib/localStore.svelte";
+	import { fromStore } from "svelte/store";
 	import type { PageData } from "./$types";
 
 	let { data }: { data: PageData } = $props();
@@ -79,6 +81,13 @@
 	let isSearchingMatches = $state(false);
 	let lastSearchFingerprint = "";
 	let apartmentSearchRequestCount = 0;
+	const favoriteListingIdsStore = new LocalStore<string[]>(
+		"favorite-listing-ids",
+		[],
+	);
+	const favoriteListingIds = fromStore(favoriteListingIdsStore);
+	let favoriteListingIdSet = $derived(new Set(favoriteListingIds.current));
+	let showOnlyFavorites = $state(false);
 
 	function uiLog(step: string, details?: Record<string, unknown>) {
 		console.info(`[listings-ui] ${step}`, details ?? {});
@@ -110,7 +119,15 @@
 		];
 	}
 
-	function dedupeListings<T extends { address: string; price: number | null; bedrooms: number | null; bathrooms: number | null; sqft: number | null }>(items: T[]): T[] {
+	function dedupeListings<
+		T extends {
+			address: string;
+			price: number | null;
+			bedrooms: number | null;
+			bathrooms: number | null;
+			sqft: number | null;
+		},
+	>(items: T[]): T[] {
 		const seen = new Set<string>();
 		return items.filter((item) => {
 			const key = `${normalizeAddress(item.address)}|${item.price}|${item.bedrooms}|${item.bathrooms}|${item.sqft}`;
@@ -120,8 +137,19 @@
 		});
 	}
 
+	function sortFavoritesFirst<T extends { id: string }>(items: T[]): T[] {
+		return [...items].sort((left, right) => {
+			const leftFavorited = favoriteListingIdSet.has(left.id) ? 1 : 0;
+			const rightFavorited = favoriteListingIdSet.has(right.id) ? 1 : 0;
+			return rightFavorited - leftFavorited;
+		});
+	}
+
 	let interiorPhotosByRoom = $derived.by(() => {
-		const groups = new globalThis.Map<string, RepresentativeInteriorPhoto[]>();
+		const groups = new globalThis.Map<
+			string,
+			RepresentativeInteriorPhoto[]
+		>();
 		for (const photo of interiorPhotos) {
 			const group = groups.get(photo.roomType) ?? [];
 			group.push(photo);
@@ -150,7 +178,10 @@
 			seen.add(photo.localPath);
 		}
 
-		for (const photo of rotateItems(interiorPhotos, seed % interiorPhotos.length)) {
+		for (const photo of rotateItems(
+			interiorPhotos,
+			seed % interiorPhotos.length,
+		)) {
 			if (selected.length >= Math.min(6, interiorPhotos.length)) break;
 			if (seen.has(photo.localPath)) continue;
 
@@ -194,7 +225,7 @@
 				price: listing.price,
 				representativePhotos: buildRepresentativePhotoSet(listing.id),
 			}));
-			return dedupeListings(mapped).slice(0, 10);
+			return sortFavoritesFirst(dedupeListings(mapped)).slice(0, 10);
 		}
 
 		const mapped = searchResult.ranked.map((hit) => {
@@ -217,11 +248,27 @@
 				matchScore: hit.total_score,
 				requiredSummary: null,
 				highlights,
-				representativePhotos: buildRepresentativePhotoSet(hit.listing.id),
+				representativePhotos: buildRepresentativePhotoSet(
+					hit.listing.id,
+				),
 			};
 		});
-		return dedupeListings(mapped);
+		return sortFavoritesFirst(dedupeListings(mapped));
 	});
+
+	let displayedListingCards = $derived(
+		showOnlyFavorites
+			? listingCards.filter((l) => favoriteListingIdSet.has(l.id))
+			: listingCards,
+	);
+
+	function toggleListingFavorite(listingId: string) {
+		favoriteListingIdsStore.update((ids) =>
+			ids.includes(listingId)
+				? ids.filter((id) => id !== listingId)
+				: [...ids, listingId],
+		);
+	}
 
 	let listings = $derived.by(() => {
 		if (!searchResult) {
@@ -239,6 +286,12 @@
 			price: hit.listing.rent,
 		}));
 	});
+
+	let displayedListings = $derived(
+		showOnlyFavorites
+			? listings.filter((l) => favoriteListingIdSet.has(l.id))
+			: listings,
+	);
 
 	let completedProfile = $derived.by(() => {
 		if (!result) return null;
@@ -263,16 +316,15 @@
 		);
 	});
 
-	// Compute bounding box for all listings
 	let listingBounds = $derived.by(() => {
-		if (listings.length === 0) return undefined;
+		if (displayedListings.length === 0) return undefined;
 
 		let minLng = Infinity,
 			maxLng = -Infinity;
 		let minLat = Infinity,
 			maxLat = -Infinity;
 
-		for (const l of listings) {
+		for (const l of displayedListings) {
 			if (l.lng < minLng) minLng = l.lng;
 			if (l.lng > maxLng) maxLng = l.lng;
 			if (l.lat < minLat) minLat = l.lat;
@@ -285,11 +337,10 @@
 		] as [[number, number], [number, number]];
 	});
 
-	// Convert listings to GeoJSON for cluster layer
 	let listingsGeoJSON = $derived.by(
 		(): GeoJSON.FeatureCollection<GeoJSON.Point> => ({
 			type: "FeatureCollection",
-			features: listings.map((l) => ({
+			features: displayedListings.map((l) => ({
 				type: "Feature" as const,
 				geometry: {
 					type: "Point" as const,
@@ -323,7 +374,9 @@
 				}
 			: 60,
 	);
-	let floatingCardTopPadding = $derived(questionsSubmitted ? "6rem" : "1.5rem");
+	let floatingCardTopPadding = $derived(
+		questionsSubmitted ? "6rem" : "1.5rem",
+	);
 
 	// Typewriter loading phrases
 	const loadingPhrases = [
@@ -472,7 +525,10 @@
 
 				// If there are no clarification questions, skip straight to the
 				// left-panel layout so listings slide into view immediately.
-				if (extractionResult.preferences.clarification_questions.length === 0) {
+				if (
+					extractionResult.preferences.clarification_questions
+						.length === 0
+				) {
 					questionsSubmitted = true;
 				}
 			} catch (error) {
@@ -885,7 +941,13 @@
 				const points: POIPoint[] = [];
 				const pois = data.pois as Record<
 					string,
-					Array<{ id: string; name: string; lat: number; lng: number; address: string | null }>
+					Array<{
+						id: string;
+						name: string;
+						lat: number;
+						lng: number;
+						address: string | null;
+					}>
 				>;
 				for (const [category, places] of Object.entries(pois)) {
 					for (const place of places) {
@@ -1126,60 +1188,111 @@
 					<!-- Listings results -->
 					<!-- svelte-ignore a11y_click_events_have_key_events -->
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
-					<div class="flex min-h-0 flex-1 flex-col gap-4" onclick={(e) => {
-						if (!(e.target as HTMLElement).closest('article')) {
-							selectedListingId = null;
-						}
-					}}>
+					<div
+						class="flex min-h-0 flex-1 flex-col gap-4"
+						onclick={(e) => {
+							if (!(e.target as HTMLElement).closest("article")) {
+								selectedListingId = null;
+							}
+						}}
+					>
 						<div class="shrink-0">
-							<h2
-								class="font-serif text-xl tracking-tight text-foreground"
-							>
-								Top matches
-							</h2>
-							{#if isSearchingMatches}
-								<p class="mt-1 text-xs text-muted-foreground">
-									Finding the best listings for you...
-								</p>
-							{:else if searchResult}
-								<p class="mt-1 text-xs text-muted-foreground">
-									{searchResult.ranked.length} listings ranked
-								</p>
-							{:else}
-								<p class="mt-1 text-xs text-muted-foreground">
-									{Math.min(10, listings.length)} of {listings.length}
-									listings
-								</p>
-							{/if}
+							<div class="mr-4 flex items-center justify-between">
+								<div>
+									<h2
+										class="font-serif text-xl tracking-tight text-foreground"
+									>
+										Top matches
+									</h2>
+									{#if isSearchingMatches}
+										<p class="mt-1 text-xs text-muted-foreground">
+											Finding the best listings for you...
+										</p>
+									{:else if searchResult}
+										<p class="mt-1 text-xs text-muted-foreground">
+											{searchResult.ranked.length} listings ranked
+										</p>
+									{:else}
+										<p class="mt-1 text-xs text-muted-foreground">
+											{Math.min(10, listings.length)} of {listings.length}
+											listings
+										</p>
+									{/if}
+								</div>
+								{#if favoriteListingIdSet.size > 0}
+									<button
+										class="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition {showOnlyFavorites
+											? 'bg-rose-500/10 text-rose-500'
+											: 'bg-muted text-muted-foreground hover:text-foreground'}"
+										onclick={() => (showOnlyFavorites = !showOnlyFavorites)}
+									>
+										<svg
+											class="h-3.5 w-3.5 {showOnlyFavorites ? 'fill-rose-500' : ''}"
+											viewBox="0 0 24 24"
+											fill="none"
+											stroke="currentColor"
+											stroke-width="2"
+										>
+											<path
+												stroke-linecap="round"
+												stroke-linejoin="round"
+												d="m12 21-1.45-1.32C5.4 15.02 2 11.93 2 8.15 2 5.06 4.42 2.75 7.3 2.75c1.63 0 3.2.76 4.2 1.94 1-1.18 2.57-1.94 4.2-1.94C18.58 2.75 21 5.06 21 8.15c0 3.78-3.4 6.87-8.55 11.54z"
+											/>
+										</svg>
+										{showOnlyFavorites ? 'Show all' : `Favorites (${favoriteListingIdSet.size})`}
+									</button>
+								{/if}
+							</div>
 						</div>
 						<div
 							class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1"
 						>
 							{#if isSearchingMatches && !searchResult}
 								{#each { length: 5 } as _, i (i)}
-									<div class="flex shrink-0 flex-row rounded-2xl border border-border bg-card shadow-sm overflow-hidden mr-4">
-										<Skeleton class="w-28 shrink-0 self-stretch rounded-none" />
-										<div class="flex min-w-0 flex-1 flex-col gap-2.5 p-4">
-											<div class="flex items-baseline justify-between">
+									<div
+										class="flex shrink-0 flex-row rounded-2xl border border-border bg-card shadow-sm overflow-hidden mr-4"
+									>
+										<Skeleton
+											class="w-28 shrink-0 self-stretch rounded-none"
+										/>
+										<div
+											class="flex min-w-0 flex-1 flex-col gap-2.5 p-4"
+										>
+											<div
+												class="flex items-baseline justify-between"
+											>
 												<Skeleton class="h-5 w-20" />
-												<Skeleton class="h-4 w-16 rounded-full" />
+												<Skeleton
+													class="h-4 w-16 rounded-full"
+												/>
 											</div>
 											<Skeleton class="h-3.5 w-28" />
 											<Skeleton class="h-3 w-40" />
 											<div class="flex gap-1.5 pt-0.5">
-												<Skeleton class="h-4 w-20 rounded-md" />
-												<Skeleton class="h-4 w-24 rounded-md" />
+												<Skeleton
+													class="h-4 w-20 rounded-md"
+												/>
+												<Skeleton
+													class="h-4 w-24 rounded-md"
+												/>
 											</div>
 										</div>
 									</div>
 								{/each}
 							{/if}
-							{#each listingCards as listing (listing.id)}
+							{#each displayedListingCards as listing (listing.id)}
 								<div id="listing-{listing.id}">
 									<ListingCard
 										{listing}
-										selected={selectedListingId === listing.id}
-										onclick={() => handleListingClick(listing)}
+										isFavorited={favoriteListingIdSet.has(
+											listing.id,
+										)}
+										selected={selectedListingId ===
+											listing.id}
+										onclick={() =>
+											handleListingClick(listing)}
+										ontogglefavorite={() =>
+											toggleListingFavorite(listing.id)}
 									/>
 								</div>
 							{/each}

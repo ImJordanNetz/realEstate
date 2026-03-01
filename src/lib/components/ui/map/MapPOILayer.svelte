@@ -18,8 +18,8 @@
 
 	let { pois = [] }: Props = $props();
 
-	let currentTheme: 'light' | 'dark' = $state('light');
-	const isDark = $derived(currentTheme === 'dark');
+	let currentTheme = $state(theme.value);
+	const isDark = $derived(currentTheme === "dark");
 
 	const mapCtx = getContext<{
 		getMap: () => MapLibreGL.Map | null;

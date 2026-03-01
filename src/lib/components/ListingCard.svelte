@@ -10,7 +10,7 @@
 
 	export type ListingHighlight = {
 		text: string;
-		status: 'pass' | 'fail' | 'unknown';
+		status: "pass" | "fail" | "unknown";
 	};
 
 	type RepresentativePhoto = {
@@ -40,8 +40,10 @@
 
 	interface Props {
 		listing: ListingCardListing;
+		isFavorited?: boolean;
 		selected?: boolean;
 		onclick?: () => void;
+		ontogglefavorite?: () => void;
 	}
 
 	type ListingPhoto = {
@@ -51,7 +53,13 @@
 		googleMapsUri: string | null;
 	};
 
-	let { listing, selected = false, onclick }: Props = $props();
+	let {
+		listing,
+		isFavorited = false,
+		selected = false,
+		onclick,
+		ontogglefavorite,
+	}: Props = $props();
 	let photo = $state<ListingPhoto | null>(null);
 	let isPhotoLoading = $state(false);
 	let photoLoadFailed = $state(false);
@@ -60,6 +68,11 @@
 	function toggleExpand(e: MouseEvent) {
 		e.stopPropagation();
 		expanded = !expanded;
+	}
+
+	function toggleFavorite(e: MouseEvent) {
+		e.stopPropagation();
+		ontogglefavorite?.();
 	}
 
 	function formatPrice(price: number | null) {
@@ -100,7 +113,9 @@
 		return (await response.json()) as ListingPhoto;
 	}
 
-	const streetViewUrl = $derived(buildStreetViewUrl(listing.lat, listing.lng));
+	const streetViewUrl = $derived(
+		buildStreetViewUrl(listing.lat, listing.lng),
+	);
 
 	function buildZillowUrl(address: string) {
 		return `https://www.zillow.com/homes/${encodeURIComponent(address)}`;
@@ -109,9 +124,15 @@
 	const zillowUrl = $derived(buildZillowUrl(listing.address));
 	const representativePhotos = $derived(listing.representativePhotos ?? []);
 	const fallbackPhoto = $derived(representativePhotos[0] ?? null);
-	const usesRepresentativeFallback = $derived(!photo?.photoUrl && !!fallbackPhoto);
-	const showRepresentativeCarousel = $derived(expanded && representativePhotos.length > 0);
-	const displayPhotoUrl = $derived(photo?.photoUrl ?? fallbackPhoto?.localPath ?? null);
+	const usesRepresentativeFallback = $derived(
+		!photo?.photoUrl && !!fallbackPhoto,
+	);
+	const showRepresentativeCarousel = $derived(
+		expanded && representativePhotos.length > 0,
+	);
+	const displayPhotoUrl = $derived(
+		photo?.photoUrl ?? fallbackPhoto?.localPath ?? null,
+	);
 
 	function formatRoomType(roomType: string) {
 		return roomType.replace(/-/g, " ");
@@ -151,12 +172,18 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <article
-	class="group relative mr-4 flex shrink-0 overflow-hidden rounded-2xl border bg-card shadow-sm transition-all duration-300 hover:shadow-md {selected ? 'border-primary ring-2 ring-primary/20' : 'border-border'} {!selected && onclick ? 'cursor-pointer' : ''} {expanded ? 'flex-col' : 'flex-row'}"
-	style={expanded ? 'height: 70vh;' : ''}
-	onclick={onclick}
+	class="group relative mr-4 flex shrink-0 overflow-hidden rounded-2xl border bg-card shadow-sm transition-all duration-300 hover:shadow-md {selected
+		? 'border-primary ring-2 ring-primary/20'
+		: 'border-border'} {!selected && onclick
+		? 'cursor-pointer'
+		: ''} {expanded ? 'flex-col' : 'flex-row'}"
+	style={expanded ? "height: 70vh;" : ""}
+	{onclick}
 >
 	<div
-		class="relative shrink-0 overflow-hidden bg-gradient-to-br from-muted to-muted/60 transition-all duration-300 {expanded ? 'aspect-video w-full' : 'w-28 self-stretch'}"
+		class="relative shrink-0 overflow-hidden bg-gradient-to-br from-muted to-muted/60 transition-all duration-300 {expanded
+			? 'aspect-video w-full'
+			: 'w-28 self-stretch'}"
 	>
 		{#if showRepresentativeCarousel}
 			<Carousel
@@ -166,19 +193,29 @@
 				<CarouselContent class="-ms-0 h-full">
 					{#each representativePhotos as representativePhoto (representativePhoto.localPath)}
 						<CarouselItem class="h-full ps-0">
-							<div class="relative h-full w-full">
+							<div
+								class="relative flex h-full w-full items-center justify-center bg-muted/40"
+							>
 								<img
-									class="h-full w-full object-cover"
+									class="h-full w-full object-contain object-center"
 									src={representativePhoto.localPath}
 									alt={`Representative interior photo for ${listing.address}: ${representativePhoto.alt}`}
 									loading="lazy"
 								/>
-								<div class="absolute inset-x-3 top-3 flex items-center justify-between gap-2">
-									<span class="rounded-full bg-black/60 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white backdrop-blur-sm">
+								<div
+									class="absolute inset-x-3 top-3 flex items-center justify-between gap-2"
+								>
+									<span
+										class="rounded-full bg-black/60 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white backdrop-blur-sm"
+									>
 										Representative interior
 									</span>
-									<span class="rounded-full bg-black/45 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.12em] text-white/90 backdrop-blur-sm">
-										{formatRoomType(representativePhoto.roomType)}
+									<span
+										class="rounded-full bg-black/45 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.12em] text-white/90 backdrop-blur-sm"
+									>
+										{formatRoomType(
+											representativePhoto.roomType,
+										)}
 									</span>
 								</div>
 							</div>
@@ -186,8 +223,12 @@
 					{/each}
 				</CarouselContent>
 				{#if representativePhotos.length > 1}
-					<CarouselPrevious class="start-3 border-white/20 bg-black/45 text-white hover:bg-black/60" />
-					<CarouselNext class="end-3 border-white/20 bg-black/45 text-white hover:bg-black/60" />
+					<CarouselPrevious
+						class="start-3 border-white/20 bg-black/45 text-white hover:bg-black/60"
+					/>
+					<CarouselNext
+						class="end-3 border-white/20 bg-black/45 text-white hover:bg-black/60"
+					/>
 				{/if}
 			</Carousel>
 		{:else if displayPhotoUrl}
@@ -200,13 +241,17 @@
 				loading="lazy"
 			/>
 			{#if usesRepresentativeFallback}
-				<span class="absolute left-2 top-2 rounded-full bg-black/60 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white backdrop-blur-sm">
+				<span
+					class="absolute left-2 top-2 rounded-full bg-black/60 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white backdrop-blur-sm"
+				>
 					Representative interior
 				</span>
 			{/if}
 		{:else}
 			{#if isPhotoLoading}
-				<div class="absolute inset-0 animate-pulse bg-gradient-to-br from-muted via-card to-muted"></div>
+				<div
+					class="absolute inset-0 animate-pulse bg-gradient-to-br from-muted via-card to-muted"
+				></div>
 			{/if}
 			<div
 				class="absolute inset-0 flex items-center justify-center text-muted-foreground/50"
@@ -226,38 +271,89 @@
 				</svg>
 			</div>
 			{#if photoLoadFailed || !listing.placeId}
-				<span class="absolute inset-x-0 bottom-3 text-center text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+				<span
+					class="absolute inset-x-0 bottom-3 text-center text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"
+				>
 					No photo
 				</span>
 			{/if}
 		{/if}
 	</div>
 
-	<div class="flex min-w-0 shrink-0 flex-col p-4 transition-all duration-300 {expanded ? 'gap-3 p-5' : 'flex-1 gap-1.5'}">
-		<div class="flex items-baseline justify-between">
-			<p class="font-semibold tracking-tight text-foreground transition-all duration-300 {expanded ? 'text-2xl' : 'text-lg'}">
+	<div
+		class="flex min-w-0 shrink-0 flex-col p-2 transition-all duration-300 {expanded
+			? 'gap-3 p-5'
+			: 'flex-1 gap-1.5'}"
+	>
+		<div class="flex items-center justify-between">
+			<p
+				class="font-semibold tracking-tight text-foreground transition-all duration-300 {expanded
+					? 'text-2xl'
+					: 'text-lg'}"
+			>
 				{formatPrice(listing.price)}<span
-					class="font-normal text-muted-foreground {expanded ? 'text-sm' : 'text-xs'}">/mo</span
+					class="font-normal text-muted-foreground {expanded
+						? 'text-sm'
+						: 'text-xs'}">/mo</span
 				>
 			</p>
-			{#if listing.matchScore != null}
-				<span class="rounded-full bg-primary/10 px-2 py-0.5 font-semibold text-primary {expanded ? 'text-sm' : 'text-[11px]'}">
-					{formatMatchScore(listing.matchScore)}
-				</span>
-			{:else if listing.sqft}
-				<p class="text-muted-foreground {expanded ? 'text-sm' : 'text-xs'}">
-					{formatPrice(
-						listing.price && listing.sqft
-							? Math.round((listing.price / listing.sqft) * 100) /
-									100
-							: null,
-					)}/sqft
-				</p>
-			{/if}
+			<div class="flex items-center gap-1.5">
+				{#if listing.matchScore != null}
+					<span
+						class="rounded-full bg-primary/10 px-2 py-0.5 font-semibold text-primary {expanded
+							? 'text-sm'
+							: 'text-[11px]'}"
+					>
+						{formatMatchScore(listing.matchScore)}
+					</span>
+				{:else if listing.sqft}
+					<p
+						class="text-muted-foreground {expanded
+							? 'text-sm'
+							: 'text-xs'}"
+					>
+						{formatPrice(
+							listing.price && listing.sqft
+								? Math.round(
+										(listing.price / listing.sqft) * 100,
+									) / 100
+								: null,
+						)}/sqft
+					</p>
+				{/if}
+				<button
+					class="inline-flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground/60 transition hover:text-rose-500 m-0 p-0 {isFavorited
+						? 'text-rose-500'
+						: ''}"
+					onclick={toggleFavorite}
+					aria-label={isFavorited
+						? "Remove favorite"
+						: "Favorite listing"}
+					aria-pressed={isFavorited}
+				>
+					<svg
+						class="h-4 w-4 transition-transform duration-150 {isFavorited
+							? 'fill-rose-500 text-rose-500 scale-110'
+							: ''}"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							d="m12 21-1.45-1.32C5.4 15.02 2 11.93 2 8.15 2 5.06 4.42 2.75 7.3 2.75c1.63 0 3.2.76 4.2 1.94 1-1.18 2.57-1.94 4.2-1.94C18.58 2.75 21 5.06 21 8.15c0 3.78-3.4 6.87-8.55 11.54z"
+						/>
+					</svg>
+				</button>
+			</div>
 		</div>
 
 		<div
-			class="flex flex-wrap items-center gap-x-2 text-muted-foreground {expanded ? 'text-base' : 'text-[13px]'}"
+			class="flex flex-wrap items-center gap-x-2 text-muted-foreground {expanded
+				? 'text-base'
+				: 'text-[13px]'}"
 		>
 			<span>{formatBedBath(listing.bedrooms, listing.bathrooms)}</span>
 			{#if listing.sqft}
@@ -267,39 +363,61 @@
 		</div>
 
 		<a
-			class="group/sv flex items-center gap-1 truncate text-muted-foreground transition hover:text-foreground {expanded ? 'text-sm' : 'text-xs'}"
+			class="group/sv flex items-center gap-1 truncate text-muted-foreground transition hover:text-foreground {expanded
+				? 'text-sm'
+				: 'text-xs'}"
 			href={streetViewUrl}
 			target="_blank"
 			rel="noreferrer"
 		>
-			<svg class="h-3 w-3 shrink-0 text-muted-foreground/50 transition group-hover/sv:text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-				<path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-				<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z" />
+			<svg
+				class="h-3 w-3 shrink-0 text-muted-foreground/50 transition group-hover/sv:text-muted-foreground"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2"
+			>
+				<path
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+				/>
+				<path
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z"
+				/>
 			</svg>
 			<span class="truncate">{listing.address}</span>
 		</a>
 
 		{#if listing.requiredSummary}
-			<p class="font-medium text-amber-700 {expanded ? 'text-sm' : 'text-xs'}">
+			<p
+				class="font-medium text-amber-700 {expanded
+					? 'text-sm'
+					: 'text-xs'}"
+			>
 				{listing.requiredSummary}
-			</p>
-		{/if}
-
-		{#if expanded && representativePhotos.length > 0}
-			<p class="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-				Representative interiors, not photos of the exact unit
 			</p>
 		{/if}
 
 		{#if listing.highlights?.length}
 			<div class="flex flex-wrap gap-1.5 pt-0.5">
 				{#each listing.highlights as highlight (highlight.text)}
-					{#if highlight.status === 'fail'}
-						<span class="inline-flex items-center rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 font-medium text-rose-400 {expanded ? 'text-xs' : 'text-[10px]'}">
+					{#if highlight.status === "fail"}
+						<span
+							class="inline-flex items-center rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 font-medium text-rose-400 {expanded
+								? 'text-xs'
+								: 'text-[10px]'}"
+						>
 							{highlight.text}
 						</span>
 					{:else}
-						<span class="inline-flex items-center rounded-md border border-border bg-muted px-2 py-0.5 font-medium text-muted-foreground {expanded ? 'text-xs' : 'text-[10px]'}">
+						<span
+							class="inline-flex items-center rounded-md border border-border bg-muted px-2 py-0.5 font-medium text-muted-foreground {expanded
+								? 'text-xs'
+								: 'text-[10px]'}"
+						>
 							{highlight.text}
 						</span>
 					{/if}
@@ -316,8 +434,18 @@
 				onclick={(e) => e.stopPropagation()}
 			>
 				View on Zillow
-				<svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-					<path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+				<svg
+					class="h-3 w-3"
+					fill="none"
+					viewBox="0 0 24 24"
+					stroke="currentColor"
+					stroke-width="2"
+				>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"
+					/>
 				</svg>
 			</a>
 		{/if}
@@ -327,10 +455,22 @@
 	<button
 		class="absolute bottom-2 right-2 flex h-7 w-7 items-center justify-center rounded-full bg-card/90 text-muted-foreground shadow-md backdrop-blur-sm transition hover:bg-card hover:text-foreground"
 		onclick={toggleExpand}
-		aria-label={expanded ? 'Collapse listing' : 'Expand listing'}
+		aria-label={expanded ? "Collapse listing" : "Expand listing"}
 	>
-		<svg class="h-4 w-4 transition-transform duration-300 {expanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-			<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+		<svg
+			class="h-4 w-4 transition-transform duration-300 {expanded
+				? 'rotate-180'
+				: ''}"
+			fill="none"
+			viewBox="0 0 24 24"
+			stroke="currentColor"
+			stroke-width="2"
+		>
+			<path
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				d="M19.5 8.25l-7.5 7.5-7.5-7.5"
+			/>
 		</svg>
 	</button>
 </article>

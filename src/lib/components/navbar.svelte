@@ -8,7 +8,7 @@
 	</a>
 	<button
 		onclick={toggleTheme}
-		class="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+		class="cursor-pointer rounded-full border border-transparent p-2 text-muted-foreground transition-all duration-200 hover:scale-105 hover:border-primary/25 hover:bg-primary hover:text-primary-foreground hover:shadow-md hover:shadow-primary/30"
 		aria-label="Toggle dark mode"
 	>
 		{#if $theme === 'light'}
