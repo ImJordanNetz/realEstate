@@ -263,6 +263,13 @@ function backfillDefaults(input: unknown): unknown {
 	if (!Array.isArray(obj.constraints)) obj.constraints = [];
 	if (typeof obj.raw_input !== 'string') obj.raw_input = '';
 
+	// Nullify non-object values for nullable object fields
+	for (const key of ['commute', 'nightlife', 'unit_requirements'] as const) {
+		if (obj[key] !== null && obj[key] !== undefined && typeof obj[key] !== 'object') {
+			obj[key] = null;
+		}
+	}
+
 	// Backfill commute sub-fields (nullify if search_query is not a valid string)
 	if (obj.commute && typeof obj.commute === 'object') {
 		const c = obj.commute as Record<string, unknown>;
@@ -305,9 +312,18 @@ function backfillDefaults(input: unknown): unknown {
 	// Backfill unit_requirements sub-fields
 	if (obj.unit_requirements && typeof obj.unit_requirements === 'object') {
 		const ur = obj.unit_requirements as Record<string, unknown>;
+
+		// Nullify non-object nullable sub-fields, default missing ones
 		for (const [key, defaultVal] of Object.entries(UNIT_REQUIREMENTS_DEFAULTS)) {
-			if (!(key in ur)) ur[key] = defaultVal;
+			if (!(key in ur)) {
+				ur[key] = defaultVal;
+			} else if (key === 'amenities') {
+				if (!Array.isArray(ur[key])) ur[key] = null;
+			} else if (ur[key] !== null && ur[key] !== undefined && typeof ur[key] !== 'object') {
+				ur[key] = null;
+			}
 		}
+
 		// Range-like objects: bedrooms, sqft, lease_length_months
 		for (const key of ['bedrooms', 'sqft', 'lease_length_months']) {
 			if (ur[key] && typeof ur[key] === 'object') {
@@ -325,6 +341,7 @@ function backfillDefaults(input: unknown): unknown {
 		if (ur.pets && typeof ur.pets === 'object') {
 			const p = ur.pets as Record<string, unknown>;
 			if (!('pet_types' in p)) p.pet_types = null;
+			else if (!Array.isArray(p.pet_types)) p.pet_types = null;
 			if (!('is_dealbreaker' in p)) p.is_dealbreaker = false;
 			if (!('importance' in p)) p.importance = 0.5;
 		}
@@ -349,13 +366,14 @@ function backfillDefaults(input: unknown): unknown {
 		}
 		// Amenities array items
 		if (Array.isArray(ur.amenities)) {
-			for (const item of ur.amenities) {
-				if (item && typeof item === 'object') {
-					const a = item as Record<string, unknown>;
-					if (!('is_dealbreaker' in a)) a.is_dealbreaker = false;
-					if (!('importance' in a)) a.importance = 0.3;
-				}
-			}
+			ur.amenities = ur.amenities.filter((item: unknown) => {
+				if (!item || typeof item !== 'object') return false;
+				const a = item as Record<string, unknown>;
+				if (typeof a.name !== 'string') return false;
+				if (!('is_dealbreaker' in a)) a.is_dealbreaker = false;
+				if (!('importance' in a)) a.importance = 0.3;
+				return true;
+			});
 		}
 	}
 
