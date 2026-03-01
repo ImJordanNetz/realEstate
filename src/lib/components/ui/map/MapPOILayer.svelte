@@ -36,7 +36,7 @@
 
 	const CATEGORY_COLORS: Record<string, string> = {
 		grocery: "#22c55e",
-		nightlife: "#a855f7",
+		nightlife: "#f59e0b",
 		park: "#16a34a",
 		hospital: "#ef4444",
 	};
@@ -190,12 +190,12 @@
 			type: "circle",
 			source: sourceId,
 			paint: {
-				"circle-radius": 5,
-				"circle-color": ["get", "color"],
-				"circle-opacity": 0.45,
-				"circle-stroke-width": 1.5,
-				"circle-stroke-color": isDark ? "#1a1a2e" : "#ffffff",
-				"circle-stroke-opacity": 0.6,
+			"circle-radius": 6,
+			"circle-color": ["get", "color"],
+			"circle-opacity": 0.85,
+			"circle-stroke-width": 1.5,
+			"circle-stroke-color": isDark ? "#1a1a2e" : "#ffffff",
+			"circle-stroke-opacity": 0.9,
 			},
 		});
 
@@ -211,9 +211,9 @@
 				"text-anchor": "bottom",
 				"text-allow-overlap": true,
 			},
-			paint: {
-				"text-opacity": 0.7,
-			},
+		paint: {
+			"text-opacity": 0.95,
+		},
 		});
 
 		// Small name label
@@ -231,8 +231,8 @@
 				"text-max-width": 8,
 			},
 			paint: {
-				"text-color": ["get", "color"],
-				"text-opacity": 0.5,
+			"text-color": ["get", "color"],
+			"text-opacity": 0.85,
 				"text-halo-color": isDark ? "#1a1a2e" : "#ffffff",
 				"text-halo-width": 1,
 			},

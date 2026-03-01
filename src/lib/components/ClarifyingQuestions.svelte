@@ -180,9 +180,9 @@
 			type="button"
 			onclick={goBack}
 			disabled={isFirst}
-			class="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition-colors {isFirst
-				? 'cursor-not-allowed text-gray-300'
-				: 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}"
+		class="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition-colors {isFirst
+			? 'cursor-not-allowed text-muted-foreground/30'
+			: 'text-muted-foreground hover:bg-muted hover:text-foreground'}"
 		>
 			<svg
 				class="h-4 w-4"
@@ -213,9 +213,9 @@
 				type="button"
 				onclick={goNext}
 				disabled={isLast}
-				class="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition-colors {isLast
-					? 'cursor-not-allowed text-gray-300'
-					: 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}"
+			class="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition-colors {isLast
+				? 'cursor-not-allowed text-muted-foreground/30'
+				: 'text-muted-foreground hover:bg-muted hover:text-foreground'}"
 			>
 				{#if isCurrentAnswered}
 					Next

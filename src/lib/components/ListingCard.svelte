@@ -205,11 +205,13 @@
 								<div
 									class="absolute inset-x-3 top-3 flex items-center justify-between gap-2"
 								>
-									<span
-										class="rounded-full bg-black/60 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white backdrop-blur-sm"
-									>
-										Representative interior
-									</span>
+									{#if expanded}
+										<span
+											class="rounded-full bg-black/60 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white backdrop-blur-sm"
+										>
+											Representative interior
+										</span>
+									{/if}
 									<span
 										class="rounded-full bg-black/45 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.12em] text-white/90 backdrop-blur-sm"
 									>
