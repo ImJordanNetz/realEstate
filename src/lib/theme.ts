@@ -9,3 +9,12 @@ function getInitialTheme(): 'light' | 'dark' {
 }
 
 export const theme = writable<'light' | 'dark'>(getInitialTheme());
+
+export function toggleTheme() {
+	theme.update((current) => {
+		const next = current === 'light' ? 'dark' : 'light';
+		document.documentElement.classList.toggle('dark', next === 'dark');
+		document.documentElement.classList.toggle('light', next === 'light');
+		return next;
+	});
+}

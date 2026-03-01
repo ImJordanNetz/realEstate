@@ -1,6 +1,7 @@
 <script lang="ts" generics="P extends GeoJSON.GeoJsonProperties">
 	import { getContext } from "svelte";
 	import MapLibreGL from "maplibre-gl";
+	import { theme } from "$lib/theme";
 
 	interface Props {
 		/** GeoJSON FeatureCollection data or URL to fetch GeoJSON from */
@@ -38,6 +39,9 @@
 		onclusterclick,
 	}: Props = $props();
 
+	let currentTheme: 'light' | 'dark' = $state('light');
+	const isDark = $derived(currentTheme === 'dark');
+
 	const mapCtx = getContext<{
 		getMap: () => MapLibreGL.Map | null;
 		isStyleReady: () => boolean;
@@ -49,12 +53,36 @@
 	const clusterCountLayerId = $derived(`cluster-count-${id}`);
 	const unclusteredLayerId = $derived(`unclustered-point-${id}`);
 	const selectedPointLayerId = $derived(`selected-point-${id}`);
+	const selectedSourceId = $derived(`selected-source-${id}`);
+	const pinImageId = $derived(`pin-icon-${id}`);
 
 	const styleProps = $derived({
 		clusterColors,
 		clusterThresholds,
 		pointColor,
 		selectedPointId,
+	});
+
+	// Subscribe to theme
+	$effect(() => {
+		const unsub = theme.subscribe((v) => (currentTheme = v));
+		return unsub;
+	});
+
+	// Update stroke colors when theme changes
+	$effect(() => {
+		const map = mapCtx.getMap();
+		const loaded = mapCtx.isStyleReady();
+		if (!loaded || !map) return;
+
+		const strokeColor = isDark ? "#1a1a2e" : "#ffffff";
+
+		if (map.getLayer(clusterLayerId)) {
+			map.setPaintProperty(clusterLayerId, "circle-stroke-color", strokeColor);
+		}
+		if (map.getLayer(unclusteredLayerId)) {
+			map.setPaintProperty(unclusteredLayerId, "circle-stroke-color", strokeColor);
+		}
 	});
 
 	// Add source and layers when map is ready
@@ -71,8 +99,43 @@
 			if (map.getLayer(unclusteredLayerId)) map.removeLayer(unclusteredLayerId);
 			if (map.getLayer(clusterLayerId)) map.removeLayer(clusterLayerId);
 			if (map.getSource(sourceId)) map.removeSource(sourceId);
+			if (map.getSource(selectedSourceId)) map.removeSource(selectedSourceId);
+			if (map.hasImage(pinImageId)) map.removeImage(pinImageId);
 		} catch {
 			// ignore
+		}
+
+		// Create pin icon if it doesn't exist
+		if (!map.hasImage(pinImageId)) {
+			const size = 48;
+			const canvas = document.createElement("canvas");
+			canvas.width = size;
+			canvas.height = size;
+			const ctx = canvas.getContext("2d")!;
+
+			// Pin body
+			ctx.beginPath();
+			ctx.arc(size / 2, 18, 14, Math.PI, 0);
+			ctx.quadraticCurveTo(size / 2 + 14, 26, size / 2, size - 4);
+			ctx.quadraticCurveTo(size / 2 - 14, 26, size / 2 - 14, 18);
+			ctx.fillStyle = pointColor;
+			ctx.fill();
+			ctx.strokeStyle = isDark ? "#1a1a2e" : "#ffffff";
+			ctx.lineWidth = 2.5;
+			ctx.stroke();
+
+			// Inner dot
+			ctx.beginPath();
+			ctx.arc(size / 2, 18, 5, 0, Math.PI * 2);
+			ctx.fillStyle = isDark ? "#1a1a2e" : "#ffffff";
+			ctx.fill();
+
+			const imageData = ctx.getImageData(0, 0, size, size);
+			map.addImage(pinImageId, {
+				width: size,
+				height: size,
+				data: new Uint8Array(imageData.data.buffer),
+			});
 		}
 
 		// Add clustered GeoJSON source
@@ -120,14 +183,8 @@
 				],
 				"circle-stroke-width": 1,
 				"circle-stroke-color": "#fff",
-				"circle-opacity": selectedPointId
-					? [
-							"case",
-							["==", ["get", "has_selected"], true],
-							0.85,
-							0.25,
-						]
-					: 0.85,
+				"circle-opacity": selectedPointId ? 0 : 0.85,
+				"circle-stroke-opacity": selectedPointId ? 0 : 1,
 			},
 		});
 
@@ -144,6 +201,7 @@
 			},
 			paint: {
 				"text-color": "#fff",
+				"text-opacity": selectedPointId ? 0 : 1,
 			},
 		});
 
@@ -154,55 +212,36 @@
 			source: sourceId,
 			filter: ["!", ["has", "point_count"]],
 			paint: {
-				"circle-color": selectedPointId
-					? [
-							"case",
-							["==", ["get", "id"], selectedPointId],
-							pointColor,
-							pointColor,
-						]
-					: pointColor,
-				"circle-radius": selectedPointId
-					? [
-							"case",
-							["==", ["get", "id"], selectedPointId],
-							7,
-							5,
-						]
-					: 5,
-				"circle-opacity": selectedPointId
-					? [
-							"case",
-							["==", ["get", "id"], selectedPointId],
-							1,
-							0.22,
-						]
-					: 1,
+				"circle-color": pointColor,
+				"circle-radius": 5,
+				"circle-opacity": selectedPointId ? 0 : 1,
 				"circle-stroke-width": 2,
-				"circle-stroke-color": selectedPointId
-					? [
-							"case",
-							["==", ["get", "id"], selectedPointId],
-							"#ffffff",
-							"#ffffff",
-						]
-					: "#fff",
+				"circle-stroke-color": "#fff",
+				"circle-stroke-opacity": selectedPointId ? 0 : 1,
 			},
+		});
+
+		// Separate non-clustered source for the selected pin so it shows at every zoom
+		const selectedFeature = selectedPointId
+			? (typeof data !== "string" ? data.features.find((f) => f.properties?.id === selectedPointId) : null)
+			: null;
+		map.addSource(selectedSourceId, {
+			type: "geojson",
+			data: selectedFeature
+				? { type: "FeatureCollection", features: [selectedFeature] }
+				: { type: "FeatureCollection", features: [] },
 		});
 
 		map.addLayer({
 			id: selectedPointLayerId,
-			type: "circle",
-			source: sourceId,
-			filter: selectedPointId
-				? ["all", ["!", ["has", "point_count"]], ["==", ["get", "id"], selectedPointId]]
-				: ["==", ["get", "id"], "__never__"],
-			paint: {
-				"circle-color": pointColor,
-				"circle-radius": 9,
-				"circle-opacity": 1,
-				"circle-stroke-width": 3,
-				"circle-stroke-color": "#ffffff",
+			type: "symbol",
+			source: selectedSourceId,
+			layout: {
+				"icon-image": pinImageId,
+				"icon-size": 1,
+				"icon-anchor": "bottom",
+				"icon-allow-overlap": true,
+				"icon-ignore-placement": true,
 			},
 		});
 
@@ -213,6 +252,8 @@
 				if (map.getLayer(unclusteredLayerId)) map.removeLayer(unclusteredLayerId);
 				if (map.getLayer(clusterLayerId)) map.removeLayer(clusterLayerId);
 				if (map.getSource(sourceId)) map.removeSource(sourceId);
+				if (map.getSource(selectedSourceId)) map.removeSource(selectedSourceId);
+				if (map.hasImage(pinImageId)) map.removeImage(pinImageId);
 			} catch {
 				// ignore
 			}
@@ -269,68 +310,42 @@
 			map.setPaintProperty(
 				clusterLayerId,
 				"circle-opacity",
-				selectedPointId
-					? [
-							"case",
-							["==", ["get", "has_selected"], true],
-							0.85,
-							0.25,
-						]
-					: 0.85,
+				selectedPointId ? 0 : 0.85,
+			);
+			map.setPaintProperty(
+				clusterLayerId,
+				"circle-stroke-opacity",
+				selectedPointId ? 0 : 1,
+			);
+		}
+		if (map.getLayer(clusterCountLayerId) && selectedChanged) {
+			map.setPaintProperty(
+				clusterCountLayerId,
+				"text-opacity",
+				selectedPointId ? 0 : 1,
 			);
 		}
 
-		// Update unclustered point layer color
+		// Update unclustered point layer
 		if (map.getLayer(unclusteredLayerId) && prev.pointColor !== pointColor) {
 			map.setPaintProperty(unclusteredLayerId, "circle-color", pointColor);
 		}
-		if (map.getLayer(unclusteredLayerId) && (selectedChanged || prev.pointColor !== pointColor)) {
-			map.setPaintProperty(
-				unclusteredLayerId,
-				"circle-color",
-				selectedPointId
-					? [
-							"case",
-							["==", ["get", "id"], selectedPointId],
-							pointColor,
-							pointColor,
-						]
-					: pointColor,
-			);
-			map.setPaintProperty(
-				unclusteredLayerId,
-				"circle-radius",
-				selectedPointId
-					? [
-							"case",
-							["==", ["get", "id"], selectedPointId],
-							7,
-							5,
-						]
-					: 5,
-			);
-			map.setPaintProperty(
-				unclusteredLayerId,
-				"circle-opacity",
-				selectedPointId
-					? [
-							"case",
-							["==", ["get", "id"], selectedPointId],
-							1,
-							0.22,
-						]
-					: 1,
-			);
+		if (map.getLayer(unclusteredLayerId) && selectedChanged) {
+			map.setPaintProperty(unclusteredLayerId, "circle-opacity", selectedPointId ? 0 : 1);
+			map.setPaintProperty(unclusteredLayerId, "circle-stroke-opacity", selectedPointId ? 0 : 1);
 		}
-		if (map.getLayer(selectedPointLayerId)) {
-			map.setFilter(
-				selectedPointLayerId,
-				selectedPointId
-					? ["all", ["!", ["has", "point_count"]], ["==", ["get", "id"], selectedPointId]]
-					: ["==", ["get", "id"], "__never__"],
-			);
-			if (prev.pointColor !== pointColor) {
-				map.setPaintProperty(selectedPointLayerId, "circle-color", pointColor);
+		// Update selected pin source data
+		if (selectedChanged) {
+			const source = map.getSource(selectedSourceId) as MapLibreGL.GeoJSONSource | undefined;
+			if (source && typeof data !== "string") {
+				const feature = selectedPointId
+					? data.features.find((f) => f.properties?.id === selectedPointId)
+					: null;
+				source.setData(
+					feature
+						? { type: "FeatureCollection", features: [feature] }
+						: { type: "FeatureCollection", features: [] },
+				);
 			}
 		}
 	});

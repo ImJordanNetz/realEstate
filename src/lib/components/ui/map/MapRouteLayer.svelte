@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getContext, onDestroy } from "svelte";
 	import MapLibreGL from "maplibre-gl";
+	import { theme } from "$lib/theme";
 
 	export type RouteLine = {
 		id: string;
@@ -23,6 +24,9 @@
 	}
 
 	let { routes = [], destinations = [] }: Props = $props();
+
+	let currentTheme: 'light' | 'dark' = $state('light');
+	const isDark = $derived(currentTheme === 'dark');
 
 	const mapCtx = getContext<{
 		getMap: () => MapLibreGL.Map | null;
@@ -94,11 +98,13 @@
 		const address = props.address as string;
 		const minutes = props.minutes as number;
 		const mapsUrl = props.mapsUrl as string;
+		const nameColor = isDark ? "#e5e7eb" : "#1f2937";
+		const addrColor = isDark ? "#9ca3af" : "#6b7280";
 
 		return `<div style="font-family: system-ui, -apple-system, sans-serif; min-width: 180px; max-width: 240px;">
-			<div style="font-size: 13px; font-weight: 600; color: #1f2937; line-height: 1.3;">${name}</div>
+			<div style="font-size: 13px; font-weight: 600; color: ${nameColor}; line-height: 1.3;">${name}</div>
 			${minutes >= 0 ? `<div style="font-size: 11px; color: #7c3aed; font-weight: 500; margin-top: 3px;">${minutes} min away</div>` : ""}
-			${address ? `<div style="font-size: 11px; color: #6b7280; margin-top: 3px; line-height: 1.3;">${address}</div>` : ""}
+			${address ? `<div style="font-size: 11px; color: ${addrColor}; margin-top: 3px; line-height: 1.3;">${address}</div>` : ""}
 			<a href="${mapsUrl}" target="_blank" rel="noopener noreferrer"
 				style="display: inline-flex; align-items: center; gap: 4px; margin-top: 8px; font-size: 11px; font-weight: 500; color: #4285f4; text-decoration: none;"
 				onmouseover="this.style.textDecoration='underline'"
@@ -112,6 +118,9 @@
 	function handleDestClick(map: MapLibreGL.Map, e: MapLibreGL.MapMouseEvent & { features?: MapLibreGL.GeoJSONFeature[] }) {
 		const feature = e.features?.[0];
 		if (!feature || feature.geometry.type !== "Point") return;
+
+		// Prevent the click from reaching POI layers below
+		e.originalEvent.stopPropagation();
 
 		closePopup();
 
@@ -128,6 +137,30 @@
 			.setHTML(buildPopupHTML(props))
 			.addTo(map);
 	}
+
+	// Subscribe to theme
+	$effect(() => {
+		const unsub = theme.subscribe((v) => (currentTheme = v));
+		return unsub;
+	});
+
+	// Update label colors when theme changes
+	$effect(() => {
+		const map = mapCtx.getMap();
+		const ready = mapCtx.isStyleReady();
+		if (!ready || !map) return;
+
+		const haloColor = isDark ? "#1a1a2e" : "#ffffff";
+		const textColor = isDark ? "#c4b5fd" : "#4c1d95";
+
+		if (map.getLayer(destLabelLayerId)) {
+			map.setPaintProperty(destLabelLayerId, "text-color", textColor);
+			map.setPaintProperty(destLabelLayerId, "text-halo-color", haloColor);
+		}
+		if (map.getLayer(destCircleLayerId)) {
+			map.setPaintProperty(destCircleLayerId, "circle-stroke-color", isDark ? "#1a1a2e" : "#ffffff");
+		}
+	});
 
 	// Add sources and layers
 	$effect(() => {
@@ -186,7 +219,7 @@
 				"circle-radius": 7,
 				"circle-color": "#7c3aed",
 				"circle-stroke-width": 2,
-				"circle-stroke-color": "#ffffff",
+				"circle-stroke-color": isDark ? "#1a1a2e" : "#ffffff",
 			},
 		});
 
@@ -202,8 +235,8 @@
 				"text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
 			},
 			paint: {
-				"text-color": "#4c1d95",
-				"text-halo-color": "#ffffff",
+				"text-color": isDark ? "#c4b5fd" : "#4c1d95",
+				"text-halo-color": isDark ? "#1a1a2e" : "#ffffff",
 				"text-halo-width": 1.5,
 			},
 		});
@@ -285,16 +318,18 @@
 		box-shadow:
 			0 4px 6px -1px rgb(0 0 0 / 0.1),
 			0 2px 4px -2px rgb(0 0 0 / 0.1);
+		background: var(--card);
+		color: var(--foreground);
 	}
 
 	:global(.route-dest-popup .maplibregl-popup-close-button) {
 		font-size: 16px;
 		padding: 2px 6px;
-		color: #9ca3af;
+		color: var(--muted-foreground);
 	}
 
 	:global(.route-dest-popup .maplibregl-popup-close-button:hover) {
-		color: #374151;
+		color: var(--foreground);
 		background: transparent;
 	}
 </style>

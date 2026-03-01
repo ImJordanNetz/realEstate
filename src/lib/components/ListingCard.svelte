@@ -86,8 +86,7 @@
 	const streetViewUrl = $derived(buildStreetViewUrl(listing.lat, listing.lng));
 
 	function buildZillowUrl(address: string) {
-		const slug = address.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-		return `https://www.zillow.com/homes/${encodeURIComponent(slug)}_rb/`;
+		return `https://www.zillow.com/homes/${encodeURIComponent(address)}`;
 	}
 
 	const zillowUrl = $derived(buildZillowUrl(listing.address));
@@ -126,12 +125,12 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <article
-	class="group relative mr-4 flex shrink-0 overflow-hidden rounded-2xl border bg-white shadow-sm transition-all duration-300 hover:shadow-md {selected ? 'border-primary ring-2 ring-primary/20' : 'border-gray-100'} {expanded ? 'flex-col' : 'flex-row'}"
+	class="group relative mr-4 flex shrink-0 overflow-hidden rounded-2xl border bg-card shadow-sm transition-all duration-300 hover:shadow-md {selected ? 'border-primary ring-2 ring-primary/20' : 'border-border'} {!selected && onclick ? 'cursor-pointer' : ''} {expanded ? 'flex-col' : 'flex-row'}"
 	style={expanded ? 'height: 70vh;' : ''}
 	onclick={onclick}
 >
 	<div
-		class="relative shrink-0 bg-gradient-to-br from-gray-100 to-gray-200 transition-all duration-300 {expanded ? 'w-full' : 'w-28 self-stretch'}"
+		class="relative shrink-0 bg-gradient-to-br from-muted to-muted/60 transition-all duration-300 {expanded ? 'w-full' : 'w-28 self-stretch'}"
 		style={expanded ? 'height: 45%;' : ''}
 	>
 		{#if photo?.photoUrl}
@@ -143,10 +142,10 @@
 			/>
 		{:else}
 			{#if isPhotoLoading}
-				<div class="absolute inset-0 animate-pulse bg-gradient-to-br from-sky-100 via-white to-amber-100"></div>
+				<div class="absolute inset-0 animate-pulse bg-gradient-to-br from-muted via-card to-muted"></div>
 			{/if}
 			<div
-				class="absolute inset-0 flex items-center justify-center text-gray-300"
+				class="absolute inset-0 flex items-center justify-center text-muted-foreground/50"
 			>
 				<svg
 					class="h-8 w-8"
@@ -163,7 +162,7 @@
 				</svg>
 			</div>
 			{#if photoLoadFailed || !listing.placeId}
-				<span class="absolute inset-x-0 bottom-3 text-center text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-400">
+				<span class="absolute inset-x-0 bottom-3 text-center text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
 					No photo
 				</span>
 			{/if}
@@ -172,9 +171,9 @@
 
 	<div class="flex min-w-0 shrink-0 flex-col p-4 transition-all duration-300 {expanded ? 'gap-3 p-5' : 'flex-1 gap-1.5'}">
 		<div class="flex items-baseline justify-between">
-			<p class="font-semibold tracking-tight text-gray-900 transition-all duration-300 {expanded ? 'text-2xl' : 'text-lg'}">
+			<p class="font-semibold tracking-tight text-foreground transition-all duration-300 {expanded ? 'text-2xl' : 'text-lg'}">
 				{formatPrice(listing.price)}<span
-					class="font-normal text-gray-400 {expanded ? 'text-sm' : 'text-xs'}">/mo</span
+					class="font-normal text-muted-foreground {expanded ? 'text-sm' : 'text-xs'}">/mo</span
 				>
 			</p>
 			{#if listing.matchScore != null}
@@ -182,7 +181,7 @@
 					{formatMatchScore(listing.matchScore)}
 				</span>
 			{:else if listing.sqft}
-				<p class="text-gray-400 {expanded ? 'text-sm' : 'text-xs'}">
+				<p class="text-muted-foreground {expanded ? 'text-sm' : 'text-xs'}">
 					{formatPrice(
 						listing.price && listing.sqft
 							? Math.round((listing.price / listing.sqft) * 100) /
@@ -194,22 +193,22 @@
 		</div>
 
 		<div
-			class="flex flex-wrap items-center gap-x-2 text-gray-500 {expanded ? 'text-base' : 'text-[13px]'}"
+			class="flex flex-wrap items-center gap-x-2 text-muted-foreground {expanded ? 'text-base' : 'text-[13px]'}"
 		>
 			<span>{formatBedBath(listing.bedrooms, listing.bathrooms)}</span>
 			{#if listing.sqft}
-				<span class="text-gray-300">·</span>
+				<span class="text-muted-foreground/50">·</span>
 				<span>{listing.sqft.toLocaleString()} sqft</span>
 			{/if}
 		</div>
 
 		<a
-			class="group/sv flex items-center gap-1 truncate text-gray-400 transition hover:text-gray-600 {expanded ? 'text-sm' : 'text-xs'}"
+			class="group/sv flex items-center gap-1 truncate text-muted-foreground transition hover:text-foreground {expanded ? 'text-sm' : 'text-xs'}"
 			href={streetViewUrl}
 			target="_blank"
 			rel="noreferrer"
 		>
-			<svg class="h-3 w-3 shrink-0 text-gray-300 transition group-hover/sv:text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+			<svg class="h-3 w-3 shrink-0 text-muted-foreground/50 transition group-hover/sv:text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 				<path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
 				<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z" />
 			</svg>
@@ -230,7 +229,7 @@
 							{highlight.text}
 						</span>
 					{:else}
-						<span class="inline-flex items-center rounded-md border border-gray-200 bg-gray-50 px-2 py-0.5 font-medium text-gray-500 {expanded ? 'text-xs' : 'text-[10px]'}">
+						<span class="inline-flex items-center rounded-md border border-border bg-muted px-2 py-0.5 font-medium text-muted-foreground {expanded ? 'text-xs' : 'text-[10px]'}">
 							{highlight.text}
 						</span>
 					{/if}
@@ -240,7 +239,7 @@
 
 		{#if expanded}
 			<a
-				class="mt-1 inline-flex w-fit items-center gap-1.5 rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-600 transition hover:bg-blue-100"
+				class="mt-1 inline-flex w-fit items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-accent-foreground transition hover:bg-accent/80"
 				href={zillowUrl}
 				target="_blank"
 				rel="noreferrer"
@@ -256,7 +255,7 @@
 
 	<!-- Expand/collapse button -->
 	<button
-		class="absolute bottom-2 right-2 flex h-7 w-7 items-center justify-center rounded-full bg-white/90 text-gray-400 shadow-md backdrop-blur-sm transition hover:bg-white hover:text-gray-700"
+		class="absolute bottom-2 right-2 flex h-7 w-7 items-center justify-center rounded-full bg-card/90 text-muted-foreground shadow-md backdrop-blur-sm transition hover:bg-card hover:text-foreground"
 		onclick={toggleExpand}
 		aria-label={expanded ? 'Collapse listing' : 'Expand listing'}
 	>

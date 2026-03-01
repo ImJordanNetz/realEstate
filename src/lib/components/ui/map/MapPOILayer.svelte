@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getContext } from "svelte";
 	import MapLibreGL from "maplibre-gl";
+	import { theme } from "$lib/theme";
 
 	export type POIPoint = {
 		id: string;
@@ -16,6 +17,9 @@
 	}
 
 	let { pois = [] }: Props = $props();
+
+	let currentTheme: 'light' | 'dark' = $state('light');
+	const isDark = $derived(currentTheme === 'dark');
 
 	const mapCtx = getContext<{
 		getMap: () => MapLibreGL.Map | null;
@@ -87,14 +91,16 @@
 		const color = props.color as string;
 		const emoji = props.emoji as string;
 		const mapsUrl = props.mapsUrl as string;
+		const nameColor = isDark ? "#e5e7eb" : "#1f2937";
+		const addrColor = isDark ? "#9ca3af" : "#6b7280";
 
 		return `<div style="font-family: system-ui, -apple-system, sans-serif; min-width: 180px; max-width: 240px;">
 			<div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
 				<span style="font-size: 16px;">${emoji}</span>
 				<span style="font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: ${color};">${category}</span>
 			</div>
-			<div style="font-size: 13px; font-weight: 600; color: #1f2937; line-height: 1.3;">${name}</div>
-			${address ? `<div style="font-size: 11px; color: #6b7280; margin-top: 3px; line-height: 1.3;">${address}</div>` : ""}
+			<div style="font-size: 13px; font-weight: 600; color: ${nameColor}; line-height: 1.3;">${name}</div>
+			${address ? `<div style="font-size: 11px; color: ${addrColor}; margin-top: 3px; line-height: 1.3;">${address}</div>` : ""}
 			<a href="${mapsUrl}" target="_blank" rel="noopener noreferrer"
 				style="display: inline-flex; align-items: center; gap: 4px; margin-top: 8px; font-size: 11px; font-weight: 500; color: #4285f4; text-decoration: none;"
 				onmouseover="this.style.textDecoration='underline'"
@@ -132,6 +138,29 @@
 			.addTo(map);
 	}
 
+	// Subscribe to theme
+	$effect(() => {
+		const unsub = theme.subscribe((v) => (currentTheme = v));
+		return unsub;
+	});
+
+	// Update colors when theme changes
+	$effect(() => {
+		const map = mapCtx.getMap();
+		const ready = mapCtx.isStyleReady();
+		if (!ready || !map) return;
+
+		const haloColor = isDark ? "#1a1a2e" : "#ffffff";
+		const strokeColor = isDark ? "#1a1a2e" : "#ffffff";
+
+		if (map.getLayer(labelLayerId)) {
+			map.setPaintProperty(labelLayerId, "text-halo-color", haloColor);
+		}
+		if (map.getLayer(circleLayerId)) {
+			map.setPaintProperty(circleLayerId, "circle-stroke-color", strokeColor);
+		}
+	});
+
 	// Add sources and layers
 	$effect(() => {
 		const map = mapCtx.getMap();
@@ -165,7 +194,7 @@
 				"circle-color": ["get", "color"],
 				"circle-opacity": 0.45,
 				"circle-stroke-width": 1.5,
-				"circle-stroke-color": "#ffffff",
+				"circle-stroke-color": isDark ? "#1a1a2e" : "#ffffff",
 				"circle-stroke-opacity": 0.6,
 			},
 		});
@@ -204,7 +233,7 @@
 			paint: {
 				"text-color": ["get", "color"],
 				"text-opacity": 0.5,
-				"text-halo-color": "#ffffff",
+				"text-halo-color": isDark ? "#1a1a2e" : "#ffffff",
 				"text-halo-width": 1,
 			},
 		});
@@ -275,16 +304,18 @@
 		box-shadow:
 			0 4px 6px -1px rgb(0 0 0 / 0.1),
 			0 2px 4px -2px rgb(0 0 0 / 0.1);
+		background: var(--card);
+		color: var(--foreground);
 	}
 
 	:global(.poi-popup .maplibregl-popup-close-button) {
 		font-size: 16px;
 		padding: 2px 6px;
-		color: #9ca3af;
+		color: var(--muted-foreground);
 	}
 
 	:global(.poi-popup .maplibregl-popup-close-button:hover) {
-		color: #374151;
+		color: var(--foreground);
 		background: transparent;
 	}
 </style>

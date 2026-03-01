@@ -586,6 +586,18 @@
 	// --- Nearby POIs on selected listing ---
 	let nearbyPOIs = $state<POIPoint[]>([]);
 
+	// Filter out POIs that overlap with route destinations to avoid duplicate markers
+	let filteredPOIs = $derived.by(() => {
+		if (routeDestinations.length === 0) return nearbyPOIs;
+		const destPlaceIds = new Set(
+			routeDestinations
+				.map((d) => d.placeId)
+				.filter((id): id is string => !!id),
+		);
+		if (destPlaceIds.size === 0) return nearbyPOIs;
+		return nearbyPOIs.filter((poi) => !destPlaceIds.has(poi.id));
+	});
+
 	function buildConstraintKey(constraint: {
 		label: string;
 		search_query: string;
@@ -835,7 +847,7 @@
 			boundsPadding={mapPadding}
 			styles={{
 				light: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
-				dark: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+				dark: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
 			}}
 			onmapcreated={(m) => (mapInstance = m)}
 		>
@@ -856,7 +868,7 @@
 				selectedPointId={selectedListingId}
 				onpointclick={handleMapPointClick}
 			/>
-			<MapPOILayer pois={nearbyPOIs} />
+			<MapPOILayer pois={filteredPOIs} />
 			<MapRouteLayer
 				routes={routeLines}
 				destinations={routeDestinations}
@@ -872,7 +884,7 @@
 			: 'flex-start'}; transition: align-items 0s;"
 	>
 		<div
-			class="pointer-events-auto flex flex-col gap-6 overflow-hidden rounded-[2rem] border border-white/60 bg-white/80 p-5 {leftPanelRightPadding} shadow-2xl shadow-black/15 backdrop-blur-xl"
+			class="pointer-events-auto flex flex-col gap-6 overflow-hidden rounded-[2rem] border border-border bg-card/80 p-5 {leftPanelRightPadding} shadow-2xl shadow-black/15 backdrop-blur-xl"
 			style="
 				width: {questionsSubmitted ? '33.333%' : '80%'};
 				max-width: {questionsSubmitted ? 'none' : '64rem'};
@@ -906,12 +918,12 @@
 					</div>
 					<div>
 						<h1
-							class="font-serif text-3xl tracking-tight text-gray-900"
+							class="font-serif text-3xl tracking-tight text-foreground"
 						>
 							Find your perfect place
 						</h1>
 						<p
-							class="mx-auto mt-3 max-w-md text-sm leading-relaxed text-gray-500"
+							class="mx-auto mt-3 max-w-md text-sm leading-relaxed text-muted-foreground"
 						>
 							Describe what you're looking for in natural
 							language. We'll analyze your preferences and help
@@ -929,7 +941,7 @@
 								name="prompt"
 								rows="3"
 								bind:value={query}
-								class="w-full rounded-2xl border border-gray-200 bg-white/70 px-5 py-4 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary/50 focus:ring-2 focus:ring-primary/15"
+								class="w-full rounded-2xl border border-border bg-card/70 px-5 py-4 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary/50 focus:ring-2 focus:ring-primary/15"
 								placeholder="e.g. I want a 2BR near UCI with a pool, under $2500/mo, pet-friendly..."
 							></textarea>
 							<button
@@ -942,7 +954,7 @@
 					</form>
 					<a
 						href="/"
-						class="text-sm font-medium text-gray-400 transition hover:text-primary"
+						class="text-sm font-medium text-muted-foreground transition hover:text-primary"
 					>
 						or go back home
 					</a>
@@ -951,26 +963,26 @@
 				<!-- Loading state: typewriter -->
 				<div class="flex flex-col items-center gap-8 py-12 text-center">
 					<h2
-						class="font-serif text-2xl tracking-tight text-gray-900"
+						class="font-serif text-2xl tracking-tight text-foreground"
 					>
 						Searching for your dream place
 					</h2>
 					<div
-						class="w-full max-w-sm rounded-2xl border border-gray-200/80 bg-gray-50/60 px-6 py-5"
+						class="w-full max-w-sm rounded-2xl border border-border/80 bg-muted/60 px-6 py-5"
 					>
 						<p
-							class="text-xs font-semibold uppercase tracking-[0.22em] text-gray-400"
+							class="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground"
 						>
 							Your prompt
 						</p>
-						<p class="mt-3 text-sm leading-relaxed text-gray-700">
+						<p class="mt-3 text-sm leading-relaxed text-foreground">
 							{activePrompt}
 						</p>
 					</div>
 					<div class="flex h-7 items-center justify-center gap-3">
 						<GridSpinner size="20px" class="text-primary" />
 						<span
-							class="font-serif text-lg tracking-tight text-gray-900"
+							class="font-serif text-lg tracking-tight text-foreground"
 							>{typewriterText}<span
 								class="ml-px inline-block h-5 w-[2px] translate-y-[2px] animate-[blink_1s_steps(1)_infinite] bg-primary/70"
 							></span></span
@@ -981,10 +993,10 @@
 				<!-- Error state -->
 				<div class="flex flex-col items-center gap-5 py-8 text-center">
 					<div
-						class="flex h-14 w-14 items-center justify-center rounded-2xl bg-red-50"
+						class="flex h-14 w-14 items-center justify-center rounded-2xl bg-destructive/10"
 					>
 						<svg
-							class="h-7 w-7 text-red-400"
+							class="h-7 w-7 text-destructive"
 							fill="none"
 							viewBox="0 0 24 24"
 							stroke="currentColor"
@@ -998,16 +1010,16 @@
 						</svg>
 					</div>
 					<div>
-						<h2 class="text-lg font-semibold text-gray-900">
+						<h2 class="text-lg font-semibold text-foreground">
 							Something went wrong
 						</h2>
-						<p class="mt-1 text-sm text-gray-500">
+						<p class="mt-1 text-sm text-muted-foreground">
 							{apiError.message}
 						</p>
 					</div>
 					<a
 						href="/listings"
-						class="rounded-full border border-gray-200 px-5 py-2 text-sm font-medium text-gray-700 transition hover:border-primary/40 hover:text-primary"
+						class="rounded-full border border-border px-5 py-2 text-sm font-medium text-foreground transition hover:border-primary/40 hover:text-primary"
 					>
 						Try again
 					</a>
@@ -1016,14 +1028,14 @@
 				{#if !questionsSubmitted && result.preferences.clarification_questions.length > 0}
 					<!-- Clarifying questions -->
 					<div class="flex min-h-0 flex-1 flex-col">
-						<div class="border-b border-gray-100 pb-4 text-center">
+						<div class="border-b border-border pb-4 text-center">
 							<h2
-								class="font-serif text-2xl tracking-tight text-gray-900 md:text-3xl"
+								class="font-serif text-2xl tracking-tight text-foreground md:text-3xl"
 							>
 								Help us refine your search
 							</h2>
 							<p
-								class="mx-auto mt-2 max-w-md text-sm text-gray-500"
+								class="mx-auto mt-2 max-w-md text-sm text-muted-foreground"
 							>
 								We understood most of your preferences. Answer
 								these to get the best results.
@@ -1040,23 +1052,29 @@
 					</div>
 				{:else}
 					<!-- Listings results -->
-					<div class="flex min-h-0 flex-1 flex-col gap-4">
+					<!-- svelte-ignore a11y_click_events_have_key_events -->
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div class="flex min-h-0 flex-1 flex-col gap-4" onclick={(e) => {
+						if (!(e.target as HTMLElement).closest('article')) {
+							selectedListingId = null;
+						}
+					}}>
 						<div class="shrink-0">
 							<h2
-								class="font-serif text-xl tracking-tight text-gray-900"
+								class="font-serif text-xl tracking-tight text-foreground"
 							>
 								Top matches
 							</h2>
 							{#if isSearchingMatches}
-								<p class="mt-1 text-xs text-gray-400">
+								<p class="mt-1 text-xs text-muted-foreground">
 									Finding the best listings for you...
 								</p>
 							{:else if searchResult}
-								<p class="mt-1 text-xs text-gray-400">
+								<p class="mt-1 text-xs text-muted-foreground">
 									{searchResult.ranked.length} listings ranked
 								</p>
 							{:else}
-								<p class="mt-1 text-xs text-gray-400">
+								<p class="mt-1 text-xs text-muted-foreground">
 									{Math.min(10, listings.length)} of {listings.length}
 									listings
 								</p>
@@ -1067,7 +1085,7 @@
 						>
 							{#if isSearchingMatches && !searchResult}
 								{#each { length: 5 } as _, i (i)}
-									<div class="flex shrink-0 flex-row rounded-2xl border border-gray-100 bg-white shadow-sm overflow-hidden mr-4">
+									<div class="flex shrink-0 flex-row rounded-2xl border border-border bg-card shadow-sm overflow-hidden mr-4">
 										<Skeleton class="w-28 shrink-0 self-stretch rounded-none" />
 										<div class="flex min-w-0 flex-1 flex-col gap-2.5 p-4">
 											<div class="flex items-baseline justify-between">
