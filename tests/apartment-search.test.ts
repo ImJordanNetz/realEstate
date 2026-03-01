@@ -9,6 +9,7 @@ import {
 	buildSearchRegion,
 	searchApartments,
 	type PlaceCandidate,
+	type PlaceSearchRequest,
 	type PlaceSearchProvider,
 	type RouteMatrixProvider
 } from '../src/lib/server/apartment-search';
@@ -31,6 +32,26 @@ class StubPlacesProvider implements PlaceSearchProvider {
 
 	private toKey(searchType: string, query: string) {
 		return `${searchType}:${query.trim().toLowerCase()}`;
+	}
+}
+
+class RecordingPlacesProvider implements PlaceSearchProvider {
+	public readonly calls: Array<{
+		query: string;
+		searchType: string;
+		radiusMeters: number;
+	}> = [];
+
+	constructor(private readonly resolver: (input: PlaceSearchRequest) => PlaceCandidate[]) {}
+
+	async search(input: PlaceSearchRequest) {
+		this.calls.push({
+			query: input.query,
+			searchType: input.searchType,
+			radiusMeters: input.region.radius_meters
+		});
+
+		return this.resolver(input);
 	}
 }
 
@@ -506,6 +527,175 @@ test('searchApartments only routes a shortlist of top candidates', async () => {
 		new Set(['alpha', 'beta'])
 	);
 	assert.ok(routes.calls.every((call) => call.originIds.length <= 2));
+});
+
+test('searchApartments refines saturated category searches against the shortlist region', async () => {
+	const preferences = {
+		budget: {
+			max_rent: null,
+			ideal_rent: 2_000
+		},
+		nightlife: null,
+		commute: null,
+		constraints: [
+			{
+				label: 'Parks nearby',
+				search_query: 'park',
+				search_type: 'category',
+				travel_mode: 'walk',
+				max_minutes: 10,
+				is_dealbreaker: false,
+				importance: 0.9
+			}
+		],
+		unit_requirements: null,
+		raw_input: 'I want a cheaper apartment near a park'
+	} satisfies ApartmentPreferences;
+	const listings = [
+		createListing('alpha', {
+			rent: 1_900,
+			location: { lat: 33.6802, lng: -117.8202 }
+		}),
+		createListing('beta', {
+			rent: 3_200,
+			location: { lat: 33.832, lng: -117.914 }
+		})
+	];
+	const broadParks = Array.from({ length: 20 }, (_, index) => ({
+		id: `broad-park-${index + 1}`,
+		name: `Broad Park ${index + 1}`,
+		location: {
+			lat: 33.83 + index * 0.0005,
+			lng: -117.914 + index * 0.0005
+		},
+		address: 'Far away, CA',
+		types: ['park']
+	}));
+	const localPark: PlaceCandidate = {
+		id: 'alpha-local-park',
+		name: 'Alpha Local Park',
+		location: { lat: 33.681, lng: -117.8201 },
+		address: 'Irvine, CA',
+		types: ['park']
+	};
+	const places = new RecordingPlacesProvider((input) => {
+		if (input.searchType !== 'category' || input.query !== 'park') {
+			return [];
+		}
+
+		return input.region.radius_meters > 5_000 ? broadParks : [localPark];
+	});
+	const routes: RouteMatrixProvider = {
+		async computeRouteMatrix(input) {
+			return input.origins.flatMap((origin) =>
+				input.destinations.map((destination) => ({
+					origin_id: origin.id,
+					destination_id: destination.id,
+					minutes:
+						origin.id === 'alpha'
+							? destination.id === 'alpha-local-park'
+								? 4
+								: 28
+							: destination.id === 'alpha-local-park'
+								? 35
+								: 8
+				}))
+			);
+		}
+	};
+
+	const result = await searchApartments({
+		preferences,
+		listings,
+		providers: { places, routes },
+		options: {
+			shortlistCount: 1
+		}
+	});
+	const parkKey = buildApartmentConstraintKey(preferences.constraints[0]);
+	const parkCalls = places.calls.filter(
+		(call) => call.searchType === 'category' && call.query === 'park'
+	);
+
+	assert.equal(parkCalls.length, 2);
+	assert.ok(parkCalls[1]!.radiusMeters < parkCalls[0]!.radiusMeters);
+	assert.equal(result.ranked.length, 1);
+	assert.equal(result.ranked[0]?.listing.id, 'alpha');
+	assert.equal(result.ranked[0]?.derived_metrics.proximity_minutes[parkKey], 4);
+	assert.equal(result.ranked[0]?.matched_places.constraints[parkKey]?.id, 'alpha-local-park');
+});
+
+test('searchApartments skips shortlist refinement when the initial category search is not saturated', async () => {
+	const preferences = {
+		budget: {
+			max_rent: null,
+			ideal_rent: 2_000
+		},
+		nightlife: null,
+		commute: null,
+		constraints: [
+			{
+				label: 'Parks nearby',
+				search_query: 'park',
+				search_type: 'category',
+				travel_mode: 'walk',
+				max_minutes: 10,
+				is_dealbreaker: false,
+				importance: 0.9
+			}
+		],
+		unit_requirements: null,
+		raw_input: 'I want a cheaper apartment near a park'
+	} satisfies ApartmentPreferences;
+	const listings = [
+		createListing('alpha', {
+			rent: 1_900,
+			location: { lat: 33.6802, lng: -117.8202 }
+		}),
+		createListing('beta', {
+			rent: 3_200,
+			location: { lat: 33.832, lng: -117.914 }
+		})
+	];
+	const localPark: PlaceCandidate = {
+		id: 'alpha-local-park',
+		name: 'Alpha Local Park',
+		location: { lat: 33.681, lng: -117.8201 },
+		address: 'Irvine, CA',
+		types: ['park']
+	};
+	const places = new RecordingPlacesProvider((input) => {
+		if (input.searchType !== 'category' || input.query !== 'park') {
+			return [];
+		}
+
+		return [localPark];
+	});
+	const routes: RouteMatrixProvider = {
+		async computeRouteMatrix(input) {
+			return input.origins.flatMap((origin) =>
+				input.destinations.map((destination) => ({
+					origin_id: origin.id,
+					destination_id: destination.id,
+					minutes: origin.id === 'alpha' && destination.id === 'alpha-local-park' ? 4 : 12
+				}))
+			);
+		}
+	};
+
+	await searchApartments({
+		preferences,
+		listings,
+		providers: { places, routes },
+		options: {
+			shortlistCount: 1
+		}
+	});
+
+	const parkCalls = places.calls.filter(
+		(call) => call.searchType === 'category' && call.query === 'park'
+	);
+	assert.equal(parkCalls.length, 1);
 });
 
 test('searchApartments ranks location-like amenities by nearby travel time', async () => {

@@ -180,6 +180,7 @@ type AmenityLocationPreference = {
 
 const EARTH_RADIUS_METERS = 6_371_000;
 const DEFAULT_SHORTLIST_COUNT = 48;
+const MAX_PLACE_RESULTS_PER_REQUEST = 20;
 const LOCATION_AMENITY_PATTERNS = [
 	/\b(gym|fitness|yoga|pilates|climbing|grocery|supermarket|market|store|coffee|cafe|restaurant|bar|brewery|park|trail|beach|library|station|transit|mall|shopping|dog park|playground|pickleball|tennis|basketball)\b/
 ];
@@ -326,6 +327,115 @@ export function buildSearchRegion(
 			east: east + lngPadding
 		}
 	});
+}
+
+function getEffectivePlaceResultLimit(maxResults: number) {
+	return Math.min(Math.max(maxResults, 1), MAX_PLACE_RESULTS_PER_REQUEST);
+}
+
+function dedupePlaceCandidates(places: PlaceCandidate[]) {
+	const byId = new Map<string, PlaceCandidate>();
+
+	for (const place of places) {
+		if (!byId.has(place.id)) {
+			byId.set(place.id, place);
+		}
+	}
+
+	return Array.from(byId.values());
+}
+
+async function refineCategoryPlacesForShortlist(params: {
+	shortlistedListings: ApartmentInventoryListing[];
+	preferences: ApartmentPreferences;
+	amenityLocationPreferences: AmenityLocationPreference[];
+	constraintPlacesByKey: Map<string, PlaceCandidate[]>;
+	amenityPlacesByKey: Map<string, PlaceCandidate[]>;
+	placesProvider: PlaceSearchProvider;
+	maxResults: number;
+	regionPaddingMeters?: number;
+	logger?: SearchLogger;
+}) {
+	if (!params.shortlistedListings.length) {
+		return;
+	}
+
+	const resultLimit = getEffectivePlaceResultLimit(params.maxResults);
+	const saturatedConstraintKeys = params.preferences.constraints
+		.filter((constraint) => constraint.search_type === 'category')
+		.map((constraint) => ({
+			key: buildApartmentConstraintKey(constraint),
+			query: constraint.search_query,
+			label: constraint.label,
+			travelMode: constraint.travel_mode
+		}))
+		.filter(({ key }) => (params.constraintPlacesByKey.get(key)?.length ?? 0) >= resultLimit);
+	const saturatedAmenityKeys = params.amenityLocationPreferences
+		.filter((amenityLocation) => amenityLocation.searchType === 'category')
+		.filter(
+			(amenityLocation) =>
+				(params.amenityPlacesByKey.get(amenityLocation.key)?.length ?? 0) >= resultLimit
+		);
+
+	if (!saturatedConstraintKeys.length && !saturatedAmenityKeys.length) {
+		return;
+	}
+
+	const log = params.logger ?? (() => {});
+	const shortlistedRegion = buildSearchRegion(
+		params.shortlistedListings,
+		params.regionPaddingMeters
+	);
+
+	log('search', 'shortlist_region_built', {
+		listings: params.shortlistedListings.length,
+		centerLat: Number(shortlistedRegion.center.lat.toFixed(5)),
+		centerLng: Number(shortlistedRegion.center.lng.toFixed(5)),
+		radiusMeters: Math.round(shortlistedRegion.radius_meters)
+	});
+
+	await Promise.all([
+		...saturatedConstraintKeys.map(async ({ key, query, label, travelMode }) => {
+			const existingPlaces = params.constraintPlacesByKey.get(key) ?? [];
+			const shortlistPlaces = await params.placesProvider.search({
+				query,
+				searchType: 'category',
+				region: shortlistedRegion,
+				maxResults: params.maxResults
+			});
+			const mergedPlaces = dedupePlaceCandidates([...existingPlaces, ...shortlistPlaces]);
+
+			params.constraintPlacesByKey.set(key, mergedPlaces);
+			log('search', 'constraint_places_refined', {
+				label,
+				query,
+				travelMode,
+				existingPlaces: existingPlaces.length,
+				shortlistPlaces: shortlistPlaces.length,
+				mergedPlaces: mergedPlaces.length
+			});
+		}),
+		...saturatedAmenityKeys.map(async (amenityLocation) => {
+			const existingPlaces = params.amenityPlacesByKey.get(amenityLocation.key) ?? [];
+			const shortlistPlaces = await params.placesProvider.search({
+				query: amenityLocation.query,
+				searchType: 'category',
+				region: shortlistedRegion,
+				maxResults: params.maxResults
+			});
+			const mergedPlaces = dedupePlaceCandidates([...existingPlaces, ...shortlistPlaces]);
+
+			params.amenityPlacesByKey.set(amenityLocation.key, mergedPlaces);
+			log('search', 'amenity_places_refined', {
+				label: amenityLocation.name,
+				query: amenityLocation.query,
+				travelMode: amenityLocation.travelMode,
+				existingPlaces: existingPlaces.length,
+				shortlistPlaces: shortlistPlaces.length,
+				mergedPlaces: mergedPlaces.length
+			});
+		})
+	]);
 }
 
 function toRouteOrigins(listings: ApartmentInventoryListing[]) {
@@ -847,6 +957,18 @@ export async function searchApartments(params: {
 		from: listings.length,
 		to: shortlistedListings.length,
 		sampleListingIds: shortlistedListings.slice(0, 5).map((listing) => listing.id)
+	});
+
+	await refineCategoryPlacesForShortlist({
+		shortlistedListings,
+		preferences,
+		amenityLocationPreferences,
+		constraintPlacesByKey,
+		amenityPlacesByKey,
+		placesProvider: providers.places,
+		maxResults: placeResultLimit,
+		regionPaddingMeters: options.regionPaddingMeters,
+		logger: log
 	});
 	const derivedMetricsByListingId = createDerivedMetricsStore(shortlistedListings);
 	const matchedConstraintPlacesByListingId =
