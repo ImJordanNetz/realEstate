@@ -75,6 +75,8 @@
 		googleMapsUri: string | null;
 	};
 
+	const SHOW_PLACE_COMPARISONS = false;
+
 	let {
 		listing,
 		isFavorited = false,
@@ -489,7 +491,7 @@
 			</div>
 		{/if}
 
-		{#if selected && listing.placeComparisons?.length}
+		{#if SHOW_PLACE_COMPARISONS && selected && listing.placeComparisons?.length}
 			<div class="rounded-2xl border border-sky-200/80 bg-sky-50/70 p-3">
 				<div class="flex items-center justify-between gap-3">
 					<div>
