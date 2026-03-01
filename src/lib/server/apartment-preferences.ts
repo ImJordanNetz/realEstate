@@ -60,10 +60,9 @@ export const clarificationQuestionSchema = z.object({
 	why_asked: z.string()
 });
 
-export const apartmentPreferenceInputSchema = z.object({
-	prompt: z.string().trim().min(1).max(4000),
-	model: z.string().trim().min(1).optional(),
-	clarification_answers: z.array(clarificationAnswerSchema).default([])
+export const apartmentPreferenceMessageSchema = z.object({
+	role: z.enum(['user', 'assistant']),
+	content: z.string().trim().min(1).max(20_000)
 });
 
 export const apartmentPreferenceSchema = z.object({
@@ -151,6 +150,14 @@ export const apartmentPreferenceSchema = z.object({
 	raw_input: z.string()
 });
 
+export const apartmentPreferenceInputSchema = z.object({
+	prompt: z.string().trim().min(1).max(4000),
+	model: z.string().trim().min(1).optional(),
+	clarification_answers: z.array(clarificationAnswerSchema).default([]),
+	message_history: z.array(apartmentPreferenceMessageSchema).max(100).default([]),
+	current_profile: apartmentPreferenceSchema.nullable().optional()
+});
+
 export const apartmentPreferenceExtractionSchema = z.object({
 	status: z.enum(['complete', 'needs_clarification']),
 	profile: apartmentPreferenceSchema,
@@ -158,6 +165,7 @@ export const apartmentPreferenceExtractionSchema = z.object({
 });
 
 export type ApartmentPreferenceInput = z.infer<typeof apartmentPreferenceInputSchema>;
+export type ApartmentPreferenceMessage = z.infer<typeof apartmentPreferenceMessageSchema>;
 export type ApartmentPreferences = z.infer<typeof apartmentPreferenceSchema>;
 export type ApartmentPreferenceExtraction = z.infer<typeof apartmentPreferenceExtractionSchema>;
 export type ApartmentPreferenceExtractionResponse = {
@@ -181,12 +189,18 @@ Rules:
 - Return a top-level status of either "complete" or "needs_clarification".
 - Return a profile object on every response, even when some fields remain unknown.
 - Ask at most 3 clarifying questions.
+- You may receive prior conversation history and a current profile JSON draft.
+- Treat the current profile as editable draft data, not ground truth.
+- Use the full conversation history to preserve valid context from earlier turns.
+- The latest user request overrides older user statements and any conflicting current-profile values.
+- Preserve still-valid fields from the current profile when the newer conversation does not change them.
+- Remove or overwrite fields that conflict with newer user instructions, clarification answers, or conversation history.
 - Only ask a clarifying question when the answer would materially affect apartment filtering or ranking.
 - Prefer targeted questions that can be answered as boolean, number, or single_select.
 - Do not ask open-ended freeform questions.
 - When status is "complete", clarification_questions must be empty.
 - When status is "needs_clarification", clarification_questions must contain 1 to 3 concrete questions.
-- Preserve the user's original prompt in raw_input.
+- Preserve the latest user request in raw_input.
 - Budget, commute, and unit requirements should only include values the user actually stated or strongly implied.
 - Use nightlife when the user expresses a desire for quiet nights or lively nightlife near home.
 - Never invent numeric values for rent, travel time, square footage, lease length, bathroom count, or bedroom count.
@@ -232,14 +246,42 @@ function formatClarificationAnswers(clarificationAnswers: ApartmentPreferenceInp
 		.join('\n');
 }
 
+function formatMessageHistory(messageHistory: ApartmentPreferenceInput['message_history']) {
+	if (!messageHistory.length) {
+		return 'None';
+	}
+
+	return messageHistory
+		.map((message, index) => {
+			const role = message.role === 'assistant' ? 'Assistant' : 'User';
+			return `${index + 1}. ${role}:\n${message.content}`;
+		})
+		.join('\n\n');
+}
+
+function formatCurrentProfile(currentProfile: ApartmentPreferenceInput['current_profile']) {
+	if (!currentProfile) {
+		return 'None';
+	}
+
+	return JSON.stringify(currentProfile, null, 2);
+}
+
 function buildExtractionPrompt(input: ApartmentPreferenceInput) {
 	return [
-		'User apartment preference input:',
+		'Latest user apartment preference request:',
 		input.prompt,
+		'',
+		'Prior conversation history:',
+		formatMessageHistory(input.message_history),
+		'',
+		'Current structured profile JSON draft:',
+		formatCurrentProfile(input.current_profile ?? null),
 		'',
 		'Clarification answers already collected:',
 		formatClarificationAnswers(input.clarification_answers),
 		'',
+		'Update the structured profile using the full conversation and the current JSON draft.',
 		'Return the extraction result.'
 	].join('\n');
 }

@@ -63,12 +63,6 @@
 	let photo = $state<ListingPhoto | null>(null);
 	let isPhotoLoading = $state(false);
 	let photoLoadFailed = $state(false);
-	let expanded = $state(false);
-
-	function toggleExpand(e: MouseEvent) {
-		e.stopPropagation();
-		expanded = !expanded;
-	}
 
 	function toggleFavorite(e: MouseEvent) {
 		e.stopPropagation();
@@ -128,7 +122,7 @@
 		!photo?.photoUrl && !!fallbackPhoto,
 	);
 	const showRepresentativeCarousel = $derived(
-		expanded && representativePhotos.length > 0,
+		selected && representativePhotos.length > 0,
 	);
 	const displayPhotoUrl = $derived(
 		photo?.photoUrl ?? fallbackPhoto?.localPath ?? null,
@@ -172,16 +166,16 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <article
-	class="group relative mr-4 flex shrink-0 overflow-hidden rounded-2xl border bg-card shadow-sm transition-all duration-300 hover:shadow-md {selected
+	class="group relative mr-4 flex shrink-0 overflow-hidden rounded-2xl border bg-card shadow-sm transition-[border-color,box-shadow] duration-300 hover:shadow-md {selected
 		? 'border-primary ring-2 ring-primary/20'
 		: 'border-border'} {!selected && onclick
 		? 'cursor-pointer'
-		: ''} {expanded ? 'flex-col' : 'flex-row'}"
-	style={expanded ? "height: 70vh;" : ""}
+		: ''} {selected ? 'flex-col' : 'flex-row'}"
+	style={selected ? "height: 70vh;" : ""}
 	{onclick}
 >
 	<div
-		class="relative shrink-0 overflow-hidden bg-gradient-to-br from-muted to-muted/60 transition-all duration-300 {expanded
+		class="relative shrink-0 overflow-hidden bg-gradient-to-br from-muted to-muted/60 {selected
 			? 'aspect-video w-full'
 			: 'w-28 self-stretch'}"
 	>
@@ -205,7 +199,7 @@
 								<div
 									class="absolute inset-x-3 top-3 flex items-center justify-between gap-2"
 								>
-									{#if expanded}
+									{#if selected}
 										<span
 											class="rounded-full bg-black/60 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white backdrop-blur-sm"
 										>
@@ -242,7 +236,7 @@
 					: `Representative interior photo for ${listing.address}`}
 				loading="lazy"
 			/>
-			{#if usesRepresentativeFallback}
+			{#if usesRepresentativeFallback && selected}
 				<span
 					class="absolute left-2 top-2 rounded-full bg-black/60 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white backdrop-blur-sm"
 				>
@@ -283,18 +277,18 @@
 	</div>
 
 	<div
-		class="flex min-w-0 shrink-0 flex-col p-2 transition-all duration-300 {expanded
+		class="flex min-w-0 shrink-0 flex-col p-2 {selected
 			? 'gap-3 p-5'
 			: 'flex-1 gap-1.5'}"
 	>
 		<div class="flex items-center justify-between">
 			<p
-				class="font-semibold tracking-tight text-foreground transition-all duration-300 {expanded
+				class="font-semibold tracking-tight text-foreground {selected
 					? 'text-2xl'
 					: 'text-lg'}"
 			>
 				{formatPrice(listing.price)}<span
-					class="font-normal text-muted-foreground {expanded
+					class="font-normal text-muted-foreground {selected
 						? 'text-sm'
 						: 'text-xs'}">/mo</span
 				>
@@ -302,7 +296,7 @@
 			<div class="flex items-center gap-1.5">
 				{#if listing.matchScore != null}
 					<span
-						class="rounded-full bg-primary/10 px-2 py-0.5 font-semibold text-primary {expanded
+						class="rounded-full bg-primary/10 px-2 py-0.5 font-semibold text-primary {selected
 							? 'text-sm'
 							: 'text-[11px]'}"
 					>
@@ -310,7 +304,7 @@
 					</span>
 				{:else if listing.sqft}
 					<p
-						class="text-muted-foreground {expanded
+						class="text-muted-foreground {selected
 							? 'text-sm'
 							: 'text-xs'}"
 					>
@@ -353,7 +347,7 @@
 		</div>
 
 		<div
-			class="flex flex-wrap items-center gap-x-2 text-muted-foreground {expanded
+			class="flex flex-wrap items-center gap-x-2 text-muted-foreground {selected
 				? 'text-base'
 				: 'text-[13px]'}"
 		>
@@ -365,7 +359,7 @@
 		</div>
 
 		<a
-			class="group/sv flex items-center gap-1 truncate text-muted-foreground transition hover:text-foreground {expanded
+			class="group/sv flex items-center gap-1 truncate text-muted-foreground transition hover:text-foreground {selected
 				? 'text-sm'
 				: 'text-xs'}"
 			href={streetViewUrl}
@@ -395,7 +389,7 @@
 
 		{#if listing.requiredSummary}
 			<p
-				class="font-medium text-amber-700 {expanded
+				class="font-medium text-amber-700 {selected
 					? 'text-sm'
 					: 'text-xs'}"
 			>
@@ -408,7 +402,7 @@
 				{#each listing.highlights as highlight (highlight.text)}
 					{#if highlight.status === "fail"}
 						<span
-							class="inline-flex items-center rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 font-medium text-rose-400 {expanded
+							class="inline-flex items-center rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 font-medium text-rose-400 {selected
 								? 'text-xs'
 								: 'text-[10px]'}"
 						>
@@ -416,7 +410,7 @@
 						</span>
 					{:else}
 						<span
-							class="inline-flex items-center rounded-md border border-border bg-muted px-2 py-0.5 font-medium text-muted-foreground {expanded
+							class="inline-flex items-center rounded-md border border-border bg-muted px-2 py-0.5 font-medium text-muted-foreground {selected
 								? 'text-xs'
 								: 'text-[10px]'}"
 						>
@@ -427,7 +421,7 @@
 			</div>
 		{/if}
 
-		{#if expanded}
+		{#if selected}
 			<a
 				class="mt-1 inline-flex w-fit items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-accent-foreground transition hover:bg-accent/80"
 				href={zillowUrl}
@@ -452,27 +446,4 @@
 			</a>
 		{/if}
 	</div>
-
-	<!-- Expand/collapse button -->
-	<button
-		class="absolute bottom-2 right-2 flex h-7 w-7 items-center justify-center rounded-full bg-card/90 text-muted-foreground shadow-md backdrop-blur-sm transition hover:bg-card hover:text-foreground"
-		onclick={toggleExpand}
-		aria-label={expanded ? "Collapse listing" : "Expand listing"}
-	>
-		<svg
-			class="h-4 w-4 transition-transform duration-300 {expanded
-				? 'rotate-180'
-				: ''}"
-			fill="none"
-			viewBox="0 0 24 24"
-			stroke="currentColor"
-			stroke-width="2"
-		>
-			<path
-				stroke-linecap="round"
-				stroke-linejoin="round"
-				d="M19.5 8.25l-7.5 7.5-7.5-7.5"
-			/>
-		</svg>
-	</button>
 </article>

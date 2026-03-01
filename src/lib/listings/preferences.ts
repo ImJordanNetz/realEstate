@@ -1,4 +1,5 @@
 import type {
+	ApartmentPreferenceMessage,
 	ApartmentPreferenceExtractionResponse,
 	ApartmentPreferences
 } from '$lib/server/apartment-preferences';
@@ -14,17 +15,21 @@ export type ClarificationQuestion =
 	ApartmentPreferenceExtractionResponse['preferences']['clarification_questions'][number];
 export type ClarificationAnswer =
 	ApartmentPreferenceExtractionResponse['clarification_answers'][number];
+export type PreferenceConversationMessage = ApartmentPreferenceMessage;
 type MutablePathContainer = Record<string | number, unknown>;
 
 type ExtractionRequest = {
 	prompt: string;
 	clarificationAnswers?: ApartmentPreferenceExtractionResponse['clarification_answers'];
+	messageHistory?: PreferenceConversationMessage[];
+	currentProfile?: ApartmentPreferences | null;
 	signal?: AbortSignal;
 	fetcher?: typeof fetch;
 };
 
 const EMPTY_CLARIFICATION_ANSWERS: ApartmentPreferenceExtractionResponse['clarification_answers'] =
 	[];
+const EMPTY_MESSAGE_HISTORY: PreferenceConversationMessage[] = [];
 
 export function getExtractionErrorMessage(payload: unknown): string {
 	if (
@@ -42,6 +47,8 @@ export function getExtractionErrorMessage(payload: unknown): string {
 export async function requestListingPreferenceExtraction({
 	prompt,
 	clarificationAnswers = EMPTY_CLARIFICATION_ANSWERS,
+	messageHistory = EMPTY_MESSAGE_HISTORY,
+	currentProfile = null,
 	signal,
 	fetcher = fetch
 }: ExtractionRequest) {
@@ -52,7 +59,9 @@ export async function requestListingPreferenceExtraction({
 		},
 		body: JSON.stringify({
 			prompt,
-			clarification_answers: clarificationAnswers
+			clarification_answers: clarificationAnswers,
+			message_history: messageHistory,
+			current_profile: currentProfile
 		}),
 		signal
 	});
@@ -60,6 +69,59 @@ export async function requestListingPreferenceExtraction({
 	const payload: unknown = await response.json().catch(() => null);
 
 	return { response, payload };
+}
+
+export function createUserPreferenceMessage(prompt: string): PreferenceConversationMessage {
+	return {
+		role: 'user',
+		content: prompt.trim()
+	};
+}
+
+export function createAssistantExtractionMessage(
+	result: ApartmentPreferenceExtractionResponse
+): PreferenceConversationMessage {
+	const sections = [
+		`Status: ${result.preferences.status}`,
+		'Structured apartment preference JSON:',
+		JSON.stringify(result.preferences.profile, null, 2)
+	];
+
+	if (result.preferences.clarification_questions.length > 0) {
+		sections.push(
+			'',
+			'Clarifying questions:',
+			...result.preferences.clarification_questions.map(
+				(question, index) => `${index + 1}. ${question.question}`
+			)
+		);
+	}
+
+	return {
+		role: 'assistant',
+		content: sections.join('\n')
+	};
+}
+
+export function createClarificationAnswerMessage(
+	questions: ClarificationQuestion[],
+	answers: ClarificationAnswerMap
+): PreferenceConversationMessage {
+	const lines = questions.flatMap((question) => {
+		if (!(question.id in answers)) {
+			return [];
+		}
+
+		return [`- ${question.question}: ${String(answers[question.id])}`];
+	});
+
+	return {
+		role: 'user',
+		content:
+			lines.length > 0
+				? ['Clarification answers:', ...lines].join('\n')
+				: 'Clarification answers: none provided.'
+	};
 }
 
 export function toClarificationAnswers(

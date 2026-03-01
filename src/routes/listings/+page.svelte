@@ -1,11 +1,19 @@
 <script lang="ts">
-	import type { ApartmentPreferenceExtractionResponse } from "$lib/server/apartment-preferences";
+	import { tick } from "svelte";
+	import type {
+		ApartmentPreferenceExtractionResponse,
+		ApartmentPreferences,
+	} from "$lib/server/apartment-preferences";
 	import {
+		createAssistantExtractionMessage,
+		createClarificationAnswerMessage,
+		createUserPreferenceMessage,
 		finalizeExtractionWithClarifications,
 		getExtractionErrorMessage,
 		requestListingPreferenceExtraction,
 		type ClarificationAnswerMap,
 		type ExtractionError,
+		type PreferenceConversationMessage,
 	} from "$lib/listings/preferences";
 	import {
 		getApartmentSearchErrorMessage,
@@ -75,6 +83,7 @@
 	let apiError = $state<ExtractionError | null>(null);
 	let isLoading = $state(false);
 	let activePrompt = $state("");
+	let preferenceMessageHistory = $state<PreferenceConversationMessage[]>([]);
 	let questionsSubmitted = $state(false);
 	let searchResult = $state<ApartmentSearchResponse | null>(null);
 	let searchError = $state<ApartmentSearchError | null>(null);
@@ -91,6 +100,127 @@
 
 	function uiLog(step: string, details?: Record<string, unknown>) {
 		console.info(`[listings-ui] ${step}`, details ?? {});
+	}
+
+	function resetPreferenceFlowState() {
+		result = null;
+		apiError = null;
+		questionsSubmitted = false;
+		searchResult = null;
+		searchError = null;
+		isSearchingMatches = false;
+		lastSearchFingerprint = "";
+		selectedListingId = null;
+		routeLines = [];
+		routeDestinations = [];
+		nearbyPOIs = [];
+		lastPOIListingId = "";
+	}
+
+	type PreferenceExtractionRunOptions = {
+		prompt: string;
+		priorHistory?: PreferenceConversationMessage[];
+		currentProfile?: ApartmentPreferences | null;
+		signal: AbortSignal;
+	};
+
+	async function runPreferenceExtraction({
+		prompt,
+		priorHistory = [],
+		currentProfile = null,
+		signal,
+	}: PreferenceExtractionRunOptions) {
+		const nextPrompt = prompt.trim();
+		if (!nextPrompt) return;
+
+		const nextUserMessage = createUserPreferenceMessage(nextPrompt);
+		activePrompt = nextPrompt;
+		isLoading = true;
+		resetPreferenceFlowState();
+
+		try {
+			uiLog("preference_extraction_start", {
+				promptLength: nextPrompt.length,
+				historyMessages: priorHistory.length,
+				hasCurrentProfile: !!currentProfile,
+			});
+			const { response, payload } = await requestListingPreferenceExtraction({
+				prompt: nextPrompt,
+				messageHistory: priorHistory,
+				currentProfile,
+				signal,
+			});
+
+			if (signal.aborted) {
+				return;
+			}
+
+			if (!response.ok) {
+				uiLog("preference_extraction_response_error", {
+					status: response.status,
+					message: getExtractionErrorMessage(payload),
+				});
+				apiError = {
+					message: getExtractionErrorMessage(payload),
+					status: response.status,
+				};
+				return;
+			}
+
+			const extractionResult =
+				payload as ApartmentPreferenceExtractionResponse;
+			uiLog("preference_extraction_complete", {
+				status: extractionResult.preferences.status,
+				clarificationQuestions:
+					extractionResult.preferences.clarification_questions.length,
+			});
+			result = extractionResult;
+			preferenceMessageHistory = [
+				...priorHistory,
+				nextUserMessage,
+				createAssistantExtractionMessage(extractionResult),
+			];
+
+			if (
+				extractionResult.preferences.clarification_questions.length === 0
+			) {
+				questionsSubmitted = true;
+			}
+		} catch (error) {
+			if (signal.aborted) {
+				return;
+			}
+
+			uiLog("preference_extraction_failed", {
+				message:
+					error instanceof Error
+						? error.message
+						: "Failed to extract listing preferences.",
+			});
+			apiError = {
+				message:
+					error instanceof Error
+						? error.message
+						: "Failed to extract listing preferences.",
+				status: 500,
+			};
+		} finally {
+			if (!signal.aborted) {
+				isLoading = false;
+			}
+		}
+	}
+
+	async function submitPreferenceRevision(
+		nextPrompt: string,
+		signal: AbortSignal,
+	) {
+		await runPreferenceExtraction({
+			prompt: nextPrompt,
+			priorHistory: preferenceMessageHistory,
+			currentProfile: result?.preferences.profile ?? null,
+			signal,
+		});
 	}
 
 	function formatNumber(value: number | null | undefined) {
@@ -452,109 +582,37 @@
 			answers,
 		);
 
-		activePrompt = prompt;
 		apiError = null;
 		searchError = null;
 		searchResult = null;
 		questionsSubmitted = true;
+		preferenceMessageHistory = [
+			...preferenceMessageHistory,
+			createClarificationAnswerMessage(
+				result.preferences.clarification_questions,
+				answers,
+			),
+		];
 		result = updatedResult;
 	}
 
 	$effect(() => {
 		query = prompt;
-		activePrompt = prompt;
 
 		if (!prompt) {
-			result = null;
-			apiError = null;
+			activePrompt = "";
 			isLoading = false;
-			questionsSubmitted = false;
-			searchResult = null;
-			searchError = null;
-			isSearchingMatches = false;
-			lastSearchFingerprint = "";
+			preferenceMessageHistory = [];
+			resetPreferenceFlowState();
 			return;
 		}
 
 		const controller = new AbortController();
-		isLoading = true;
-		result = null;
-		apiError = null;
-		questionsSubmitted = false;
-		searchResult = null;
-		searchError = null;
-		isSearchingMatches = false;
-		lastSearchFingerprint = "";
-
-		void (async () => {
-			try {
-				uiLog("preference_extraction_start", {
-					promptLength: prompt.length,
-				});
-				const { response, payload } =
-					await requestListingPreferenceExtraction({
-						prompt,
-						signal: controller.signal,
-					});
-
-				if (controller.signal.aborted) {
-					return;
-				}
-
-				if (!response.ok) {
-					uiLog("preference_extraction_response_error", {
-						status: response.status,
-						message: getExtractionErrorMessage(payload),
-					});
-					apiError = {
-						message: getExtractionErrorMessage(payload),
-						status: response.status,
-					};
-					return;
-				}
-
-				const extractionResult =
-					payload as ApartmentPreferenceExtractionResponse;
-				uiLog("preference_extraction_complete", {
-					status: extractionResult.preferences.status,
-					clarificationQuestions:
-						extractionResult.preferences.clarification_questions
-							.length,
-				});
-				result = extractionResult;
-
-				// If there are no clarification questions, skip straight to the
-				// left-panel layout so listings slide into view immediately.
-				if (
-					extractionResult.preferences.clarification_questions
-						.length === 0
-				) {
-					questionsSubmitted = true;
-				}
-			} catch (error) {
-				if (controller.signal.aborted) {
-					return;
-				}
-
-				uiLog("preference_extraction_failed", {
-					message:
-						error instanceof Error
-							? error.message
-							: "Failed to extract listing preferences.",
-				});
-				apiError = {
-					message:
-						error instanceof Error
-							? error.message
-							: "Failed to extract listing preferences.",
-					status: 500,
-				};
-			} finally {
-				if (!controller.signal.aborted) {
-					isLoading = false;
-				}
-			}
-		})();
+		preferenceMessageHistory = [];
+		void runPreferenceExtraction({
+			prompt,
+			signal: controller.signal,
+		});
 
 		return () => controller.abort();
 	});
@@ -687,9 +745,41 @@
 	// Map interaction: clicking a listing focuses the map on it
 	let mapInstance: import("maplibre-gl").Map | null = $state(null);
 	let selectedListingId = $state<string | null>(null);
+	let listingsScrollContainer: HTMLDivElement | null = $state(null);
+
+	async function selectListing(
+		listingId: string,
+		options: {
+			scrollIntoView?: boolean;
+			behavior?: ScrollBehavior;
+		} = {},
+	) {
+		const { scrollIntoView = false, behavior = "auto" } = options;
+		const container = listingsScrollContainer;
+		const listingElement = document.getElementById(`listing-${listingId}`);
+		const previousOffset =
+			container && listingElement
+				? listingElement.getBoundingClientRect().top -
+					container.getBoundingClientRect().top
+				: null;
+
+		selectedListingId = listingId;
+		await tick();
+
+		if (container && listingElement && previousOffset != null) {
+			const nextOffset =
+				listingElement.getBoundingClientRect().top -
+				container.getBoundingClientRect().top;
+			container.scrollTop += nextOffset - previousOffset;
+		}
+
+		if (scrollIntoView) {
+			listingElement?.scrollIntoView({ behavior, block: "nearest" });
+		}
+	}
 
 	function handleListingClick(listing: ListingCardListing) {
-		selectedListingId = listing.id;
+		void selectListing(listing.id);
 		// The map will be fitted to include the listing + its destinations
 		// inside the $effect that builds routeDestinations.
 	}
@@ -700,11 +790,7 @@
 	) {
 		const id = feature.properties?.id as string | undefined;
 		if (!id) return;
-		selectedListingId = id;
-
-		// Scroll the listing card into view
-		const el = document.getElementById(`listing-${id}`);
-		el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+		void selectListing(id, { scrollIntoView: true, behavior: "smooth" });
 	}
 
 	// --- Route polylines on selected listing ---
@@ -1246,6 +1332,7 @@
 						</div>
 						<div
 							class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1"
+							bind:this={listingsScrollContainer}
 						>
 							{#if isSearchingMatches && !searchResult}
 								{#each { length: 5 } as _, i (i)}

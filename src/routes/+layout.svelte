@@ -7,7 +7,9 @@
 </script>
 
 <svelte:head><link rel="icon" href={favicon} /></svelte:head>
-<div class="fixed top-4 left-1/2 -translate-x-1/2 z-50 w-1/2">
+<div
+	class="fixed top-4 left-0 right-0 z-50 flex items-center justify-between px-6"
+>
 	<Navbar />
 </div>
 {@render children()}
