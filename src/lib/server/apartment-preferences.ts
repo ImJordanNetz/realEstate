@@ -260,36 +260,46 @@ function backfillDefaults(input: unknown): unknown {
 	}
 
 	// Default missing top-level fields
-	if (!('constraints' in obj)) obj.constraints = [];
-	if (!('raw_input' in obj)) obj.raw_input = '';
+	if (!Array.isArray(obj.constraints)) obj.constraints = [];
+	if (typeof obj.raw_input !== 'string') obj.raw_input = '';
 
-	// Backfill commute sub-fields
+	// Backfill commute sub-fields (nullify if search_query is not a valid string)
 	if (obj.commute && typeof obj.commute === 'object') {
 		const c = obj.commute as Record<string, unknown>;
-		if (!('max_minutes' in c)) c.max_minutes = null;
-		if (!('is_dealbreaker' in c)) c.is_dealbreaker = false;
-		if (!('importance' in c)) c.importance = 0.5;
+		if (typeof c.search_query !== 'string' || c.search_query.trim() === '') {
+			obj.commute = null;
+		} else {
+			if (!('max_minutes' in c)) c.max_minutes = null;
+			if (!('is_dealbreaker' in c)) c.is_dealbreaker = false;
+			if (!('importance' in c)) c.importance = 0.5;
+		}
 	}
 
-	// Backfill nightlife sub-fields
+	// Backfill nightlife sub-fields (nullify if preference is invalid)
 	if (obj.nightlife && typeof obj.nightlife === 'object') {
 		const n = obj.nightlife as Record<string, unknown>;
-		if (!('is_dealbreaker' in n)) n.is_dealbreaker = false;
-		if (!('importance' in n)) n.importance = 0.5;
+		if (typeof n.preference !== 'string') {
+			obj.nightlife = null;
+		} else {
+			if (!('is_dealbreaker' in n)) n.is_dealbreaker = false;
+			if (!('importance' in n)) n.importance = 0.5;
+		}
 	}
 
 	// Backfill constraint items
 	if (Array.isArray(obj.constraints)) {
-		for (const item of obj.constraints) {
-			if (item && typeof item === 'object') {
-				const c = item as Record<string, unknown>;
-				if (!('max_minutes' in c)) c.max_minutes = null;
-				if (!('is_dealbreaker' in c)) c.is_dealbreaker = false;
-				if (!('importance' in c)) c.importance = 0.5;
-				if (!('search_type' in c)) c.search_type = 'category';
-				if (!('travel_mode' in c)) c.travel_mode = 'drive';
-			}
-		}
+		obj.constraints = obj.constraints.filter((item: unknown) => {
+			if (!item || typeof item !== 'object') return false;
+			const c = item as Record<string, unknown>;
+			// Drop constraints with invalid required string fields
+			if (typeof c.label !== 'string' || typeof c.search_query !== 'string') return false;
+			if (!('max_minutes' in c)) c.max_minutes = null;
+			if (!('is_dealbreaker' in c)) c.is_dealbreaker = false;
+			if (!('importance' in c)) c.importance = 0.5;
+			if (!('search_type' in c)) c.search_type = 'category';
+			if (!('travel_mode' in c)) c.travel_mode = 'drive';
+			return true;
+		});
 	}
 
 	// Backfill unit_requirements sub-fields

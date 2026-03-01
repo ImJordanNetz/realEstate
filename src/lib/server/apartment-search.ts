@@ -280,10 +280,22 @@ export function buildSearchRegion(
 		);
 	}
 
+	// Pad the bounds so that category searches (which use locationRestriction
+	// with a rectangle) include places near edge listings. Without padding,
+	// a park just outside the tight listing bounding box would be excluded,
+	// causing apartments to match against a farther-away park.
+	const latPadding = paddingMeters / 111_320;
+	const lngPadding = paddingMeters / (111_320 * Math.cos(toRadians(center.lat)));
+
 	return searchRegionSchema.parse({
 		center,
 		radius_meters: radiusMeters,
-		bounds: { south, west, north, east }
+		bounds: {
+			south: south - latPadding,
+			west: west - lngPadding,
+			north: north + latPadding,
+			east: east + lngPadding
+		}
 	});
 }
 
