@@ -25,7 +25,7 @@
 </script>
 
 <section
-    class="relative flex min-h-[80vh] flex-col items-center justify-center overflow-hidden px-6 py-12"
+    class="relative flex min-h-[80vh] flex-col items-center justify-center overflow-hidden px-6 pt-24 pb-12"
 >
     <!-- Grid background with radial fade -->
     <div

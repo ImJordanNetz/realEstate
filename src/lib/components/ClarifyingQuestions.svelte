@@ -69,23 +69,23 @@
 								? 'w-6 bg-primary'
 								: questions[i].id in answers
 									? 'w-1.5 bg-emerald-400'
-									: 'w-1.5 bg-gray-300'}"
+									: 'w-1.5 bg-muted-foreground/30'}"
 						></div>
 					</button>
 				{/each}
-				<p class="text-xs text-gray-400">
+				<p class="text-xs text-muted-foreground">
 					{currentIndex + 1} / {questions.length}
 				</p>
 			</div>
 
 			<!-- Question text -->
 			<h3
-				class="text-center font-serif text-xl leading-snug tracking-tight text-gray-900 md:text-2xl"
+				class="text-center font-serif text-xl leading-snug tracking-tight text-foreground md:text-2xl"
 			>
 				{currentQuestion.question}
 			</h3>
 			<p
-				class="mx-auto mt-2 max-w-md text-center text-xs leading-relaxed text-gray-400"
+				class="mx-auto mt-2 max-w-md text-center text-xs leading-relaxed text-muted-foreground"
 			>
 				{currentQuestion.why_asked}
 			</p>
@@ -103,7 +103,7 @@
 								currentQuestion.id
 							] === true
 								? 'border-primary bg-primary/5 text-primary shadow-md shadow-primary/10'
-								: 'border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50'}"
+								: 'border-border text-muted-foreground hover:border-primary/30 hover:bg-muted'}"
 						>
 							Yes
 						</button>
@@ -115,7 +115,7 @@
 								currentQuestion.id
 							] === false
 								? 'border-primary bg-primary/5 text-primary shadow-md shadow-primary/10'
-								: 'border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50'}"
+								: 'border-border text-muted-foreground hover:border-primary/30 hover:bg-muted'}"
 						>
 							No
 						</button>
@@ -137,10 +137,10 @@
 								? answers[currentQuestion.id]
 								: ""}
 							placeholder="Enter a number"
-							class="flex-1 rounded-2xl border-2 border-gray-200 bg-white px-6 py-3.5 text-center text-lg font-semibold text-gray-900 outline-none transition-colors placeholder:text-gray-300 focus:border-primary focus:shadow-md focus:shadow-primary/10"
+							class="flex-1 rounded-2xl border-2 border-border bg-card px-6 py-3.5 text-center text-lg font-semibold text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-primary focus:shadow-md focus:shadow-primary/10"
 						/>
 						{#if currentQuestion.unit}
-							<span class="text-sm font-medium text-gray-400"
+							<span class="text-sm font-medium text-muted-foreground"
 								>{currentQuestion.unit}</span
 							>
 						{/if}
@@ -161,7 +161,7 @@
 									currentQuestion.id
 								] === option.value
 									? 'border-primary bg-primary/5 text-primary shadow-md shadow-primary/10'
-									: 'border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50'}"
+									: 'border-border text-muted-foreground hover:border-primary/30 hover:bg-muted'}"
 							>
 								{option.label}
 							</button>
@@ -174,7 +174,7 @@
 
 	<!-- Navigation -->
 	<div
-		class="flex items-center justify-between border-t border-gray-100 pt-4"
+		class="flex items-center justify-between border-t border-border pt-4"
 	>
 		<button
 			type="button"

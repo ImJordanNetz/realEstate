@@ -182,7 +182,7 @@
 					40,
 				],
 				"circle-stroke-width": 1,
-				"circle-stroke-color": "#fff",
+				"circle-stroke-color": isDark ? "#1a1a2e" : "#fff",
 				"circle-opacity": selectedPointId ? 0 : 0.85,
 				"circle-stroke-opacity": selectedPointId ? 0 : 1,
 			},
@@ -216,7 +216,7 @@
 				"circle-radius": 5,
 				"circle-opacity": selectedPointId ? 0 : 1,
 				"circle-stroke-width": 2,
-				"circle-stroke-color": "#fff",
+				"circle-stroke-color": isDark ? "#1a1a2e" : "#fff",
 				"circle-stroke-opacity": selectedPointId ? 0 : 1,
 			},
 		});

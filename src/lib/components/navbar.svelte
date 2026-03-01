@@ -2,13 +2,13 @@
 	import { theme, toggleTheme } from '$lib/theme';
 </script>
 
-<nav class="relative z-10 flex items-center justify-between px-6 py-4 sm:px-10">
+<nav class="flex items-center justify-between gap-8 rounded-full border border-border/50 bg-background/70 px-6 py-2.5 shadow-lg backdrop-blur-xl">
 	<a href="/" class="text-2xl font-bold text-primary tracking-tight">
 		Real eLife
 	</a>
 	<button
 		onclick={toggleTheme}
-		class="rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+		class="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
 		aria-label="Toggle dark mode"
 	>
 		{#if $theme === 'light'}

@@ -252,6 +252,7 @@
 				}
 			: 60,
 	);
+	let floatingCardTopPadding = $derived(questionsSubmitted ? "6rem" : "1.5rem");
 
 	// Typewriter loading phrases
 	const loadingPhrases = [
@@ -838,7 +839,7 @@
 </svelte:head>
 
 <!-- Full-screen map background -->
-<div class="relative h-[calc(100vh-5rem)]">
+<div class="relative h-screen">
 	<div class="absolute inset-0">
 		<Map
 			center={[-117.8265, 33.6846]}
@@ -881,7 +882,7 @@
 		class="pointer-events-none absolute inset-0 flex justify-start p-6"
 		style="align-items: {questionsSubmitted
 			? 'stretch'
-			: 'flex-start'}; transition: align-items 0s;"
+			: 'center'}; padding-top: {floatingCardTopPadding}; transition: align-items 0s;"
 	>
 		<div
 			class="pointer-events-auto flex flex-col gap-6 overflow-hidden rounded-[2rem] border border-border bg-card/80 p-5 {leftPanelRightPadding} shadow-2xl shadow-black/15 backdrop-blur-xl"
