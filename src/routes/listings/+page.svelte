@@ -98,6 +98,8 @@
 	const favoriteListingIds = fromStore(favoriteListingIdsStore);
 	let favoriteListingIdSet = $derived(new Set(favoriteListingIds.current));
 	let showOnlyFavorites = $state(false);
+	let maxPrice = $state<number | null>(null);
+	let bedroomFilter = $state<number | null>(null); // null = Any, 0 = Studio, 1+
 	let revisionQuery = $state("");
 	let revisionController: AbortController | null = null;
 
@@ -396,11 +398,35 @@
 		return sortFavoritesFirst(dedupeListings(mapped));
 	});
 
-	let displayedListingCards = $derived(
-		showOnlyFavorites
-			? listingCards.filter((l) => favoriteListingIdSet.has(l.id))
-			: listingCards,
-	);
+	function applyFilters<T extends { price: number | null; bedrooms: number | null; id: string }>(items: T[]): T[] {
+		let filtered = items;
+		if (showOnlyFavorites) {
+			filtered = filtered.filter((l) => favoriteListingIdSet.has(l.id));
+		}
+		if (maxPrice != null) {
+			filtered = filtered.filter((l) => l.price != null && l.price <= maxPrice!);
+		}
+		if (bedroomFilter != null) {
+			filtered = filtered.filter((l) => l.bedrooms === bedroomFilter);
+		}
+		return filtered;
+	}
+
+	let priceRange = $derived.by(() => {
+		const prices = listingCards.map((l) => l.price).filter((p): p is number => p != null);
+		if (prices.length === 0) return { min: 0, max: 10000 };
+		return { min: Math.min(...prices), max: Math.max(...prices) };
+	});
+
+	let availableBedrooms = $derived.by(() => {
+		const set = new Set<number>();
+		for (const l of listingCards) {
+			if (l.bedrooms != null) set.add(l.bedrooms);
+		}
+		return [...set].sort((a, b) => a - b);
+	});
+
+	let displayedListingCards = $derived(applyFilters(listingCards));
 
 	function toggleListingFavorite(listingId: string) {
 		favoriteListingIdsStore.update((ids) =>
@@ -427,11 +453,7 @@
 		}));
 	});
 
-	let displayedListings = $derived(
-		showOnlyFavorites
-			? listings.filter((l) => favoriteListingIdSet.has(l.id))
-			: listings,
-	);
+	let displayedListings = $derived(applyFilters(listings));
 
 	let completedProfile = $derived.by(() => {
 		if (!result) return null;
@@ -1340,7 +1362,54 @@
 									</button>
 								{/if}
 							</div>
+							<div class="mr-4 mt-3 flex flex-col gap-2.5">
+								<div class="flex items-center gap-3">
+									<label for="max-price" class="text-xs font-medium text-muted-foreground whitespace-nowrap">
+										Max Price
+									</label>
+									<input
+										id="max-price"
+										type="range"
+										min={priceRange.min}
+										max={priceRange.max}
+										step="50"
+										value={maxPrice ?? priceRange.max}
+										oninput={(e) => {
+											const val = Number((e.target as HTMLInputElement).value);
+											maxPrice = val >= priceRange.max ? null : val;
+										}}
+										class="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-border accent-primary [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary"
+									/>
+									<span class="min-w-[4.5rem] text-right text-xs font-semibold text-foreground">
+										{maxPrice != null ? `$${maxPrice.toLocaleString()}` : 'Any'}
+									</span>
+								</div>
+								<div class="flex items-center gap-2">
+									<span class="text-xs font-medium text-muted-foreground whitespace-nowrap">Beds</span>
+									<div class="flex gap-1.5">
+										<button
+											class="rounded-full px-2.5 py-1 text-[11px] font-medium transition {bedroomFilter == null
+												? 'bg-primary text-primary-foreground'
+												: 'bg-card text-muted-foreground hover:text-foreground border border-border'}"
+											onclick={() => (bedroomFilter = null)}
+										>
+											Any
+										</button>
+										{#each availableBedrooms as bed (bed)}
+											<button
+												class="rounded-full px-2.5 py-1 text-[11px] font-medium transition {bedroomFilter === bed
+													? 'bg-primary text-primary-foreground'
+													: 'bg-card text-muted-foreground hover:text-foreground border border-border'}"
+												onclick={() => (bedroomFilter = bedroomFilter === bed ? null : bed)}
+											>
+												{bed === 0 ? 'Studio' : `${bed}`}
+											</button>
+										{/each}
+									</div>
+								</div>
+							</div>
 						</div>
+
 						<div
 							class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1"
 							bind:this={listingsScrollContainer}

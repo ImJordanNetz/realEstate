@@ -27,11 +27,38 @@ type ApiResponse = {
 	}>;
 };
 
-// Client-side cache keyed by listing ID
+type DirectionsRequestParams = {
+	listingId: string;
+	origin: { lat: number; lng: number };
+	destinations: RouteDestination[];
+	signal?: AbortSignal;
+};
+
+// Client-side cache keyed by the full route request shape
 const directionsClientCache = new Map<string, DirectionsResult>();
 
 export function clearDirectionsCache() {
 	directionsClientCache.clear();
+}
+
+function roundedCoordinate(value: number) {
+	return Number(value.toFixed(5));
+}
+
+function buildDirectionsCacheKey(params: DirectionsRequestParams) {
+	return JSON.stringify({
+		listingId: params.listingId,
+		origin: {
+			lat: roundedCoordinate(params.origin.lat),
+			lng: roundedCoordinate(params.origin.lng)
+		},
+		destinations: params.destinations.map((destination) => ({
+			id: destination.id,
+			lat: roundedCoordinate(destination.lat),
+			lng: roundedCoordinate(destination.lng),
+			travelMode: destination.travelMode
+		}))
+	});
 }
 
 /**
@@ -74,13 +101,11 @@ export function decodePolyline(encoded: string): [number, number][] {
 	return coordinates;
 }
 
-export async function requestDirections(params: {
-	listingId: string;
-	origin: { lat: number; lng: number };
-	destinations: RouteDestination[];
-	signal?: AbortSignal;
-}): Promise<DirectionsResult> {
-	const cached = directionsClientCache.get(params.listingId);
+export async function requestDirections(
+	params: DirectionsRequestParams
+): Promise<DirectionsResult> {
+	const cacheKey = buildDirectionsCacheKey(params);
+	const cached = directionsClientCache.get(cacheKey);
 	if (cached) {
 		return cached;
 	}
@@ -114,6 +139,6 @@ export async function requestDirections(params: {
 		}));
 
 	const result: DirectionsResult = { routes };
-	directionsClientCache.set(params.listingId, result);
+	directionsClientCache.set(cacheKey, result);
 	return result;
 }
