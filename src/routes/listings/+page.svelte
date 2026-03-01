@@ -99,6 +99,9 @@
 	let favoriteListingIdSet = $derived(new Set(favoriteListingIds.current));
 	let showOnlyFavorites = $state(false);
 	let maxPrice = $state<number | null>(null);
+	let maxPricePreview = $state<number | null>(null);
+	let maxPriceDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+	let displayPrice = $derived(maxPricePreview !== null ? maxPricePreview : maxPrice);
 	let bedroomFilter = $state<number | null>(null); // null = Any, 0 = Studio, 1+
 	let revisionQuery = $state("");
 	let revisionController: AbortController | null = null;
@@ -1373,15 +1376,20 @@
 										min={priceRange.min}
 										max={priceRange.max}
 										step="50"
-										value={maxPrice ?? priceRange.max}
+										value={displayPrice ?? priceRange.max}
 										oninput={(e) => {
 											const val = Number((e.target as HTMLInputElement).value);
-											maxPrice = val >= priceRange.max ? null : val;
+											maxPricePreview = val;
+											clearTimeout(maxPriceDebounceTimer);
+											maxPriceDebounceTimer = setTimeout(() => {
+												maxPrice = maxPricePreview != null && maxPricePreview >= priceRange.max ? null : maxPricePreview;
+												maxPricePreview = null;
+											}, 300);
 										}}
 										class="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-border accent-primary [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary"
 									/>
-									<span class="min-w-[4.5rem] text-right text-xs font-semibold text-foreground">
-										{maxPrice != null ? `$${maxPrice.toLocaleString()}` : 'Any'}
+									<span class="min-w-[4.5rem] text-left text-xs font-semibold text-foreground">
+										{displayPrice != null && displayPrice < priceRange.max ? `$${displayPrice.toLocaleString()}` : 'Any'}
 									</span>
 								</div>
 								<div class="flex items-center gap-2">

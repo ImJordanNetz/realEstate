@@ -6,8 +6,29 @@ import { z } from 'zod';
 const DEFAULT_OPENROUTER_MODEL = 'openai/gpt-5.2';
 
 
-const travelModeSchema = z.enum(['walk', 'bike', 'drive', 'transit']);
-const searchTypeSchema = z.enum(['category', 'specific']);
+const TRAVEL_MODE_ALIASES: Record<string, string> = {
+	walking: 'walk',
+	biking: 'bike',
+	bicycle: 'bike',
+	cycling: 'bike',
+	driving: 'drive',
+	car: 'drive',
+	public_transit: 'transit',
+	bus: 'transit',
+	train: 'transit',
+	subway: 'transit'
+};
+const travelModeSchema = z.preprocess((v) => {
+	if (typeof v === 'string') {
+		const lower = v.toLowerCase();
+		return TRAVEL_MODE_ALIASES[lower] ?? lower;
+	}
+	return v;
+}, z.enum(['walk', 'bike', 'drive', 'transit']));
+const searchTypeSchema = z.preprocess(
+	(v) => (typeof v === 'string' ? v.toLowerCase() : v),
+	z.enum(['category', 'specific'])
+);
 
 /** Coerce string booleans from LLM output ("true"/"false"/"True"/etc.) into real booleans. */
 const coerceBool = z.preprocess((v) => {
@@ -27,7 +48,21 @@ const coerceNum = z.preprocess(
 
 const importanceSchema = coerceNum.pipe(z.number().min(0).max(1));
 const clarificationResponseTypeSchema = z.enum(['boolean', 'number', 'single_select']);
-const nightlifePreferenceSchema = z.enum(['quiet', 'lively']);
+const NIGHTLIFE_ALIASES: Record<string, string> = {
+	loud: 'lively',
+	vibrant: 'lively',
+	noisy: 'lively',
+	silent: 'quiet',
+	peaceful: 'quiet',
+	calm: 'quiet'
+};
+const nightlifePreferenceSchema = z.preprocess((v) => {
+	if (typeof v === 'string') {
+		const lower = v.toLowerCase();
+		return NIGHTLIFE_ALIASES[lower] ?? lower;
+	}
+	return v;
+}, z.enum(['quiet', 'lively']));
 
 const proximityConstraintSchema = z.object({
 	label: z.string(),
@@ -125,14 +160,27 @@ export const apartmentPreferenceSchema = z.object({
 			parking: z
 				.object({
 					required: coerceBool,
-					type_preference: z.enum(['garage', 'covered', 'any']).nullable(),
+					type_preference: z
+					.preprocess(
+						(v) => (typeof v === 'string' ? v.toLowerCase() : v),
+						z.enum(['garage', 'covered', 'any'])
+					)
+					.nullable(),
 					is_dealbreaker: coerceBool,
 					importance: importanceSchema
 				})
 				.nullable(),
 			laundry: z
 				.object({
-					preference: z.enum(['in_unit', 'on_site', 'any']),
+					preference: z.preprocess((v) => {
+					if (typeof v === 'string') {
+						const lower = v.toLowerCase().replace(/[\s-]/g, '_');
+						if (lower === 'in_unit' || lower === 'in_suite') return 'in_unit';
+						if (lower === 'on_site' || lower === 'shared') return 'on_site';
+						return lower;
+					}
+					return v;
+				}, z.enum(['in_unit', 'on_site', 'any'])),
 					is_dealbreaker: coerceBool,
 					importance: importanceSchema
 				})
@@ -182,13 +230,25 @@ const UNIT_REQUIREMENTS_DEFAULTS = {
 
 const RANGE_DEFAULTS = { min: null, max: null, is_dealbreaker: false, importance: 0 };
 
+const PREFERENCE_DEFAULTS = { is_dealbreaker: false, importance: 0 };
+
 /** Fill undefined fields with defaults so partial LLM output passes strict validation. */
 function backfillDefaults(input: unknown): unknown {
 	if (!input || typeof input !== 'object') return input;
 	const obj = input as Record<string, unknown>;
 
-	// Default missing constraints to []
+	// Budget
+	if (!obj.budget || typeof obj.budget !== 'object') {
+		obj.budget = { max_rent: null, ideal_rent: null };
+	} else {
+		const b = obj.budget as Record<string, unknown>;
+		if (!('max_rent' in b)) b.max_rent = null;
+		if (!('ideal_rent' in b)) b.ideal_rent = null;
+	}
+
+	// Default missing top-level fields
 	if (!('constraints' in obj)) obj.constraints = [];
+	if (!('raw_input' in obj)) obj.raw_input = '';
 
 	// Backfill commute sub-fields
 	if (obj.commute && typeof obj.commute === 'object') {
@@ -205,23 +265,74 @@ function backfillDefaults(input: unknown): unknown {
 		if (!('importance' in n)) n.importance = 0.5;
 	}
 
+	// Backfill constraint items
+	if (Array.isArray(obj.constraints)) {
+		for (const item of obj.constraints) {
+			if (item && typeof item === 'object') {
+				const c = item as Record<string, unknown>;
+				if (!('max_minutes' in c)) c.max_minutes = null;
+				if (!('is_dealbreaker' in c)) c.is_dealbreaker = false;
+				if (!('importance' in c)) c.importance = 0.5;
+				if (!('search_type' in c)) c.search_type = 'category';
+				if (!('travel_mode' in c)) c.travel_mode = 'drive';
+			}
+		}
+	}
+
 	// Backfill unit_requirements sub-fields
 	if (obj.unit_requirements && typeof obj.unit_requirements === 'object') {
 		const ur = obj.unit_requirements as Record<string, unknown>;
 		for (const [key, defaultVal] of Object.entries(UNIT_REQUIREMENTS_DEFAULTS)) {
 			if (!(key in ur)) ur[key] = defaultVal;
 		}
-		// Backfill inner range-like objects that are present but partial
+		// Range-like objects: bedrooms, sqft, lease_length_months
 		for (const key of ['bedrooms', 'sqft', 'lease_length_months']) {
 			if (ur[key] && typeof ur[key] === 'object') {
 				ur[key] = { ...RANGE_DEFAULTS, ...(ur[key] as Record<string, unknown>) };
 			}
 		}
+		// Bathrooms
 		if (ur.bathrooms && typeof ur.bathrooms === 'object') {
 			const b = ur.bathrooms as Record<string, unknown>;
 			if (!('min' in b)) b.min = null;
 			if (!('is_dealbreaker' in b)) b.is_dealbreaker = false;
 			if (!('importance' in b)) b.importance = 0;
+		}
+		// Pets
+		if (ur.pets && typeof ur.pets === 'object') {
+			const p = ur.pets as Record<string, unknown>;
+			if (!('pet_types' in p)) p.pet_types = null;
+			if (!('is_dealbreaker' in p)) p.is_dealbreaker = false;
+			if (!('importance' in p)) p.importance = 0.5;
+		}
+		// Parking
+		if (ur.parking && typeof ur.parking === 'object') {
+			const p = ur.parking as Record<string, unknown>;
+			if (!('type_preference' in p)) p.type_preference = null;
+			if (!('is_dealbreaker' in p)) p.is_dealbreaker = false;
+			if (!('importance' in p)) p.importance = 0.5;
+		}
+		// Laundry
+		if (ur.laundry && typeof ur.laundry === 'object') {
+			const l = ur.laundry as Record<string, unknown>;
+			if (!('is_dealbreaker' in l)) l.is_dealbreaker = false;
+			if (!('importance' in l)) l.importance = 0.3;
+		}
+		// Furnished
+		if (ur.furnished && typeof ur.furnished === 'object') {
+			const f = ur.furnished as Record<string, unknown>;
+			if (!('is_dealbreaker' in f)) f.is_dealbreaker = false;
+			if (!('importance' in f)) f.importance = 0.3;
+		}
+		// Amenities array items
+		if (Array.isArray(ur.amenities)) {
+			for (const item of ur.amenities) {
+				if (item && typeof item === 'object') {
+					const a = item as Record<string, unknown>;
+					if (!('is_dealbreaker' in a)) a.is_dealbreaker = false;
+					if (!('importance' in a)) a.importance = 0.3;
+				}
+			}
 		}
 	}
 
